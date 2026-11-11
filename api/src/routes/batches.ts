@@ -14,6 +14,7 @@ import {
 import { coffees } from '../seed.js';
 import { ApiError, notFound, parse, requireRole } from '../http.js';
 import type { Store } from '../store/index.js';
+import { eventFor } from '../events.js';
 
 const nameOf = (id: string) => coffees.find((c) => c.id === id)!.name;
 
@@ -106,7 +107,7 @@ export function batchesRouter(store: Store) {
       }
       for (const { s, g } of stock) await t.setStockKg(s.coffeeId, round1(s.kg - g.kg));
 
-      return t.insertBatch({
+      const batch = await t.insertBatch({
         coffeeId: body.coffeeId,
         roaster: body.roaster,
         startMin,
@@ -115,6 +116,10 @@ export function batchesRouter(store: Store) {
         roastLevel: body.roastLevel as Batch['roastLevel'],
         greenUse,
       });
+      await t.emit(
+        eventFor(req, 'batch.created', batch.id, `scheduled ${nameOf(batch.coffeeId)} on the ${batch.roaster} at ${body.start}`),
+      );
+      return batch;
     });
     res.status(201).location(`/api/v1/batches/${batch.id}`).json(presentBatch(batch));
   });
@@ -128,6 +133,9 @@ export function batchesRouter(store: Store) {
         const s = (await t.getStock(g.coffeeId, { lock: true }))!;
         await t.setStockKg(s.coffeeId, round1(Math.min(s.capacity, s.kg + g.kg)));
       }
+      await t.emit(
+        eventFor(req, 'batch.cancelled', batch.id, `cancelled ${nameOf(batch.coffeeId)} at ${toHHMM(batch.startMin)} on the ${batch.roaster}`),
+      );
     });
     res.status(204).end();
   });

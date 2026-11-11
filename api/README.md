@@ -20,7 +20,8 @@ REST API behind the [Roastline dashboard](../dashboard): an operations tool for 
 - **PostgreSQL with safe concurrency.** Every write runs in a transaction. Order and stock rows are locked with `SELECT ... FOR UPDATE`, and each roaster's schedule with a transaction-scoped advisory lock, so two people can't book the same slot, spend the same green coffee or move an order twice. Tests fire parallel requests to prove it.
 - **Two interchangeable stores** behind one interface: PostgreSQL when `DATABASE_URL` is set, in-memory otherwise (zero-setup demo). Plain SQL migrations run automatically on start, and an empty database is seeded with demo data.
 - **JWT sign-in with roles.** 15-minute access tokens (HS256) and single-use refresh tokens stored as SHA-256 hashes. Refresh tokens rotate on every use; replaying an old one revokes every token from that sign-in. Passwords are hashed with scrypt, and unknown emails take as long to reject as wrong passwords. Three roles: `admin` (everything), `production` (move orders, schedule and cancel batches, record deliveries), `viewer` (read only), enforced per route with `403 FORBIDDEN`.
-- **35 automated tests**, run against both stores (70 runs), covering the happy paths, every error code, roles, token rotation and concurrent requests.
+- **Live updates over Server-Sent Events.** `GET /events` streams every committed change. Writes call `pg_notify` inside their transaction, so a notification goes out only if the change commits, and every API instance `LISTEN`s, so clients connected to any instance hear about changes made on another. Streams send heartbeats, close when the access token expires (the client reconnects with a fresh one) and are ended on shutdown so deploys don't hang.
+- **38 automated tests**, run against both stores (76 runs), covering the happy paths, every error code, roles, token rotation, live events and concurrent requests.
 
 ![409 conflict in Swagger UI](screenshots/2-batch-conflict-409.png)
 
@@ -106,6 +107,7 @@ curl -X POST localhost:3000/api/v1/orders/WH-2421/status \
 | GET | `/api/v1/customers` | Customers built from orders |
 | GET | `/api/v1/coffees` | Catalog and prices |
 | GET | `/api/v1/reports/shipped-by-week` | Weekly kg shipped by origin |
+| GET | `/api/v1/events` | Live change stream (Server-Sent Events) |
 | GET | `/api/v1/health` | Health check |
 
 Full details, schemas and examples: `/docs` (Swagger UI) or `/openapi.json`.
@@ -125,7 +127,8 @@ src/
   db/                 Migration runner and reset script
   auth.ts             Password hashing, JWT and refresh token helpers
   http.ts             ApiError, validation helper, authenticate / requireRole, error handler
-  routes/             One router per resource (auth.ts: sign-in, refresh, sign-out)
+  events.ts           Change notification type and helper
+  routes/             One router per resource (auth.ts: sign-in, refresh, sign-out; events.ts: SSE stream)
   app.ts              Express app (createApp is used by tests and the server)
   server.ts           Picks the store, starts the server, shuts down cleanly
 tests/api.test.ts     Vitest + Supertest, run against each store

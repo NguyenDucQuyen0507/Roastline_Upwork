@@ -4,6 +4,8 @@ import { createApp } from '../src/app.js';
 import { MemoryStore, PgStore, type Store } from '../src/store/index.js';
 import { DEMO_PASSWORD, demoUsers } from '../src/seed.js';
 import type { Role } from '../src/domain.js';
+import type { AppEvent } from '../src/events.js';
+import type { AddressInfo } from 'node:net';
 
 
 /**
@@ -301,6 +303,67 @@ describe.each(backends)('$name store', ({ make }) => {
     it('returns weekly shipped totals', async () => {
       const res = await as().get('/api/v1/reports/shipped-by-week');
       expect(res.body.data).toHaveLength(6);
+    });
+  });
+
+  describe('live events', () => {
+    /** Collects events from the store until `pred` matches one (PostgreSQL delivers them asynchronously). */
+    const nextEvent = (pred: (e: AppEvent) => boolean, ms = 3000) =>
+      new Promise<AppEvent | undefined>((resolve) => {
+        const timer = setTimeout(() => (off(), resolve(undefined)), ms);
+        const off = store.subscribe((e) => {
+          if (pred(e)) {
+            clearTimeout(timer);
+            off();
+            resolve(e);
+          }
+        });
+      });
+
+    it('publishes a committed change with who made it and from which tab', async () => {
+      const got = nextEvent((e) => e.id === 'WH-2421');
+      await as('production').post('/api/v1/orders/WH-2421/status').set('X-Client-Id', 'tab-1').send({ status: 'Roasting' });
+      expect(await got).toMatchObject({
+        type: 'order.updated',
+        summary: 'Mara Okafor moved WH-2421 to Roasting',
+        by: { name: 'Mara Okafor' },
+        source: 'tab-1',
+      });
+    });
+
+    it('publishes nothing when the change is rejected', async () => {
+      const got = nextEvent((e) => e.type === 'batch.created', 800);
+      const res = await as()
+        .post('/api/v1/batches')
+        .send({ coffeeId: 'cerrado', roaster: 'Probat P12', start: '10:30', durationMin: 45, kg: 10, roastLevel: 3 });
+      expect(res.status).toBe(409);
+      expect(await got).toBeUndefined();
+    });
+
+    it('streams changes over Server-Sent Events to signed-in users', async () => {
+      const server = app.listen(0);
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
+      try {
+        expect((await fetch(`${base}/events`)).status).toBe(401);
+
+        const ctrl = new AbortController();
+        const res = await fetch(`${base}/events`, { headers: { Authorization: `Bearer ${tokens.viewer}` }, signal: ctrl.signal });
+        expect(res.headers.get('content-type')).toContain('text/event-stream');
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = decoder.decode((await reader.read()).value); // ": connected"
+
+        await as().post('/api/v1/inventory/nyeri/receipts').send({ kg: 10 });
+        const deadline = Date.now() + 3000;
+        while (!text.includes('event: change') && Date.now() < deadline) {
+          text += decoder.decode((await reader.read()).value);
+        }
+        ctrl.abort();
+        const data = JSON.parse(text.split('\n').find((l) => l.startsWith('data: '))!.slice(6));
+        expect(data).toMatchObject({ type: 'stock.received', id: 'nyeri', summary: 'Sam Rivera received 10 kg of Kenya Nyeri AA' });
+      } finally {
+        server.close();
+      }
     });
   });
 

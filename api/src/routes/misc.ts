@@ -5,6 +5,7 @@ import { coffees, shippedByWeek } from '../seed.js';
 import { ApiError, notFound, parse, requireRole } from '../http.js';
 import type { Store } from '../store/index.js';
 import { presentOrder } from './orders.js';
+import { eventFor } from '../events.js';
 
 const coffee = (id: string) => coffees.find((c) => c.id === id)!;
 
@@ -65,6 +66,7 @@ export function inventoryRouter(store: Store) {
       }
       s.kg = round1(s.kg + kg);
       await t.setStockKg(s.coffeeId, s.kg);
+      await t.emit(eventFor(req, 'stock.received', s.coffeeId, `received ${kg} kg of ${coffee(s.coffeeId).name}`));
       return s;
     });
     res.json(presentStock(updated));

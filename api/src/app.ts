@@ -7,6 +7,7 @@ import { parse as parseYaml } from 'yaml';
 import { MemoryStore, type Store } from './store/index.js';
 import { authenticate, errorHandler, notFound } from './http.js';
 import { authRouter } from './routes/auth.js';
+import { eventsRouter } from './routes/events.js';
 import { ordersRouter } from './routes/orders.js';
 import { batchesRouter } from './routes/batches.js';
 import { coffeesRouter, customersRouter, inventoryRouter, reportsRouter } from './routes/misc.js';
@@ -36,6 +37,7 @@ export function createApp(store: Store = new MemoryStore()) {
   api.use('/inventory', inventoryRouter(store));
   api.use('/customers', customersRouter(store));
   api.use('/reports', reportsRouter());
+  api.use('/events', eventsRouter(store));
   api.use((req) => {
     throw notFound(`Route ${req.method} ${req.originalUrl}`);
   });

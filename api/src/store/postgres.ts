@@ -2,7 +2,10 @@ import pg from 'pg';
 import type { Batch, CoffeeId, Order, RefreshTokenRecord, StockRecord, User } from '../domain.js';
 import { coffees, seedBatches, seedOrders, seedStock, seedUsers } from '../seed.js';
 import { migrate } from '../db/migrate.js';
+import type { AppEvent, Listener } from '../events.js';
 import type { Store, Tx } from './types.js';
+
+const CHANNEL = 'roastline_events';
 
 // Return numeric columns as numbers and DATE columns as 'YYYY-MM-DD' strings.
 pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v) => Number(v));
@@ -172,16 +175,68 @@ function api(db: Queryable): Tx {
     async revokeTokenFamily(familyId) {
       await db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL', [familyId]);
     },
+
+    async emit(event) {
+      // NOTIFY inside a transaction is delivered on COMMIT and dropped on ROLLBACK.
+      await db.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(event)]);
+    },
   };
 }
 
 export class PgStore implements Store {
-  private constructor(private pool: pg.Pool) {}
+  private listeners = new Set<Listener>();
+  private listener?: pg.Client;
+  private closed = false;
+
+  private constructor(
+    private pool: pg.Pool,
+    private connectionString: string,
+  ) {}
+
+  /**
+   * One dedicated connection LISTENs for changes from every API instance and
+   * fans them out to this process's subscribers. Reconnects if it drops.
+   */
+  private async listen() {
+    if (this.closed) return;
+    const client = new pg.Client({ connectionString: this.connectionString });
+    const retry = () => {
+      client.removeAllListeners();
+      client.end().catch(() => {});
+      if (this.listener === client) this.listener = undefined;
+      if (!this.closed) setTimeout(() => this.listen().catch(() => {}), 2000).unref();
+    };
+    client.on('error', retry);
+    client.on('notification', (msg) => {
+      if (msg.channel !== CHANNEL || !msg.payload) return;
+      let event: AppEvent;
+      try {
+        event = JSON.parse(msg.payload);
+      } catch {
+        return;
+      }
+      for (const l of this.listeners) l(event);
+    });
+    try {
+      await client.connect();
+      await client.query(`LISTEN ${CHANNEL}`);
+      this.listener = client;
+    } catch {
+      retry();
+    }
+  }
+
+  subscribe(fn: Listener) {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
 
   /** Connects, applies pending migrations and seeds an empty database with the demo data. */
   static async connect(connectionString: string, { seedIfEmpty = true } = {}) {
     const pool = new pg.Pool({ connectionString, max: 10 });
-    const store = new PgStore(pool);
+    const store = new PgStore(pool, connectionString);
     await migrate(pool);
     if (seedIfEmpty) {
       const { rows } = await pool.query<{ coffees: number; users: number }>(
@@ -198,6 +253,7 @@ export class PgStore implements Store {
         }
       }
     }
+    await store.listen();
     return store;
   }
 
@@ -260,6 +316,10 @@ export class PgStore implements Store {
   }
 
   async close() {
+    this.closed = true;
+    const l = this.listener;
+    this.listener = undefined;
+    await l?.end().catch(() => {});
     await this.pool.end();
   }
 }

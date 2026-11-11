@@ -69,14 +69,22 @@ export function signAccessToken(user: AuthUser): Promise<string> {
     .sign(secret());
 }
 
-export type VerifyResult = { ok: true; user: AuthUser } | { ok: false; reason: 'expired' | 'invalid' };
+/** The user from a verified access token, plus the token's expiry (seconds since epoch). */
+export type TokenUser = AuthUser & { exp: number };
+export type VerifyResult = { ok: true; user: TokenUser } | { ok: false; reason: 'expired' | 'invalid' };
 
 export async function verifyAccessToken(token: string): Promise<VerifyResult> {
   try {
     const { payload } = await jwtVerify(token, secret(), { issuer: ISSUER, algorithms: ['HS256'] });
     return {
       ok: true,
-      user: { id: payload.sub!, email: String(payload.email), name: String(payload.name), role: payload.role as Role },
+      user: {
+        id: payload.sub!,
+        email: String(payload.email),
+        name: String(payload.name),
+        role: payload.role as Role,
+        exp: payload.exp!,
+      },
     };
   } catch (e) {
     return { ok: false, reason: e instanceof joseErrors.JWTExpired ? 'expired' : 'invalid' };

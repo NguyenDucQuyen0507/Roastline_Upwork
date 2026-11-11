@@ -1,4 +1,5 @@
 import type { Batch, CoffeeId, Order, RefreshTokenRecord, Roaster, StockRecord, User } from '../domain.js';
+import type { AppEvent, Listener } from '../events.js';
 
 /**
  * Data access used by the routes. Every call runs inside a unit of work:
@@ -34,11 +35,16 @@ export interface Tx {
   findRefreshToken(tokenHash: string, opts?: { lock?: boolean }): Promise<RefreshTokenRecord | undefined>;
   revokeRefreshToken(id: string): Promise<void>;
   revokeTokenFamily(familyId: string): Promise<void>;
+
+  /** Queues a change notification. It is delivered only if the transaction commits. */
+  emit(event: AppEvent): Promise<void>;
 }
 
 export interface Store {
   read<T>(fn: (t: Tx) => Promise<T>): Promise<T>;
   tx<T>(fn: (t: Tx) => Promise<T>): Promise<T>;
+  /** Receives every committed change, from this process and (with PostgreSQL) every other instance. */
+  subscribe(fn: Listener): () => void;
   /** Replace all data with the demo seed. */
   reset(): Promise<void>;
   close(): Promise<void>;

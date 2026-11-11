@@ -1437,3 +1437,32 @@ button {
     max-width: none;
   }
 }
+
+/* ---------- live status ---------- */
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.live-live .live-dot {
+  background: #2f9e6e;
+  box-shadow: 0 0 0 3px rgba(47, 158, 110, 0.18);
+}
+.live-offline .live-dot {
+  background: var(--amber);
+}
+@media (max-width: 860px) {
+  .live {
+    font-size: 0;
+    gap: 0;
+  }
+}

@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { createStore } from './store/index.js';
+import { endEventStreams } from './routes/events.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const store = await createStore();
@@ -12,5 +13,6 @@ const server = createApp(store).listen(port, () => {
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     server.close(() => store.close().finally(() => process.exit(0)));
+    endEventStreams();
   });
 }

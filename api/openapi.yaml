@@ -49,6 +49,8 @@ tags:
     description: The coffee catalog and prices.
   - name: Reports
     description: Aggregated numbers for charts.
+  - name: Events
+    description: Live change notifications (Server-Sent Events).
   - name: System
     description: Service status.
 
@@ -133,6 +135,23 @@ components:
     CoffeeId:
       type: string
       enum: [guji, huila, nyeri, cerrado, huehue, house, decaf]
+
+    AppEvent:
+      type: object
+      required: [type, id, summary, by, at]
+      properties:
+        type: { type: string, enum: [order.created, order.updated, batch.created, batch.cancelled, stock.received] }
+        id: { type: string, description: 'The order, batch or coffee that changed.', example: WH-2421 }
+        summary: { type: string, example: Mara Okafor moved WH-2421 to Roasting }
+        by:
+          type: object
+          properties:
+            id: { type: string, example: u-2 }
+            name: { type: string, example: Mara Okafor }
+        source:
+          type: string
+          description: The `X-Client-Id` header of the request that made the change, so a browser tab can skip its own echo.
+        at: { type: string, format: date-time }
 
     Role:
       type: string
@@ -344,6 +363,32 @@ components:
         Kenya: { type: number }
 
 paths:
+  /events:
+    get:
+      operationId: streamEvents
+      tags: [Events]
+      summary: Stream committed changes (Server-Sent Events)
+      description: |
+        Keeps the connection open and sends one `change` event per committed write,
+        from every API instance (PostgreSQL `LISTEN`/`NOTIFY`). Rejected or
+        rolled-back writes send nothing. A comment line is sent every 25 seconds
+        to keep proxies from closing the connection, and the stream ends when the
+        access token expires so the client reconnects with a fresh one.
+
+        `EventSource` can't send an `Authorization` header, so read the stream with
+        `fetch`. Swagger UI can't display streams; try it with
+        `curl -N -H "Authorization: Bearer $TOKEN" .../api/v1/events`.
+      responses:
+        '200':
+          description: An event stream. Each `data:` line is an `AppEvent` as JSON.
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                event: change
+                data: {"type":"order.updated","id":"WH-2421","summary":"Mara Okafor moved WH-2421 to Roasting","by":{"id":"u-2","name":"Mara Okafor"},"at":"2026-11-05T10:42:00.000Z"}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /health:
     get:
       operationId: getHealth

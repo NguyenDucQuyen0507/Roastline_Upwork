@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Batch, Order, RefreshTokenRecord, StockRecord, User } from '../domain.js';
 import { seedBatches, seedOrders, seedStock, seedUsers } from '../seed.js';
+import type { AppEvent, Listener } from '../events.js';
 import type { Store, Tx } from './types.js';
 
 interface State {
@@ -44,7 +45,10 @@ export class MemoryStore implements Store {
     });
   }
 
-  private api(): Tx {
+  private listeners = new Set<Listener>();
+
+  /** `events` collects emit() calls during a transaction; they go out after it succeeds. */
+  private api(events?: AppEvent[]): Tx {
     const s = this.state;
     return {
       listOrders: async () => clone([...s.orders].sort((a, b) => a.id.localeCompare(b.id))),
@@ -93,6 +97,11 @@ export class MemoryStore implements Store {
       revokeTokenFamily: async (familyId) => {
         for (const t of s.refreshTokens) if (t.familyId === familyId && !t.revokedAt) t.revokedAt = new Date();
       },
+
+      emit: async (event) => {
+        if (!events) throw new Error('emit() needs a transaction');
+        events.push(event);
+      },
     };
   }
 
@@ -104,16 +113,27 @@ export class MemoryStore implements Store {
   tx<T>(fn: (t: Tx) => Promise<T>): Promise<T> {
     const run = async () => {
       const before = clone(this.state);
+      const events: AppEvent[] = [];
+      let result: T;
       try {
-        return await fn(this.api());
+        result = await fn(this.api(events));
       } catch (e) {
         this.state = before;
         throw e;
       }
+      for (const e of events) for (const l of this.listeners) l(e);
+      return result;
     };
     const result = this.queue.then(run, run);
     this.queue = result.catch(() => {});
     return result;
+  }
+
+  subscribe(fn: Listener) {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
   }
 
   async reset() {

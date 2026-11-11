@@ -18,10 +18,11 @@ A full-stack operations tool for a small wholesale coffee roaster: orders, the d
 - **Business rules on the server.** Order totals are calculated from the catalog, orders move one status at a time (`New → Roasting → Packed → Shipped`), and a roast batch is refused if it overlaps another batch, exceeds the roaster's capacity or needs more green coffee than is in stock. Each rule has its own error code (`409 SCHEDULE_CONFLICT`, `409 INSUFFICIENT_GREEN_STOCK`, ...).
 - **JWT sign-in with roles** (admin, production, viewer): rotating refresh tokens with reuse detection, scrypt password hashes, role checks on every write. The dashboard has one-click demo accounts.
 - **Forms that surface server rules.** Creating orders, scheduling roasts and receiving coffee show the API's validation and business errors next to the right field (e.g. *"Probat P12 is busy from 10:15 to 11:10"* under the start time).
+- **Real-time.** Every committed change is pushed to open dashboards over Server-Sent Events, fanned out across API instances with PostgreSQL `LISTEN`/`NOTIFY`. Open two browsers, move an order in one, and the other updates with a toast saying who did it.
 - **Safe under concurrent use.** Writes run in PostgreSQL transactions with row locks and a per-roaster advisory lock. Tests fire parallel requests to prove a slot can't be double-booked and stock updates aren't lost.
 - **Design-first API.** The OpenAPI spec was written before the code and is served as interactive docs at `/docs`.
 - **One error shape everywhere** (`{ error: { code, message, details } }`), which the dashboard shows to the user.
-- **Tested.** 35 API tests run against both the PostgreSQL and the in-memory store. CI on every push: typecheck, tests on a PostgreSQL service container, lint, builds and the Docker image.
+- **Tested.** 38 API tests run against both the PostgreSQL and the in-memory store. CI on every push: typecheck, tests on a PostgreSQL service container, lint, builds and the Docker image.
 - **Polished UI.** Light and dark themes, mobile layouts, keyboard and screen-reader support.
 
 ![409 conflict in Swagger UI](api/screenshots/2-batch-conflict-409.png)
@@ -31,11 +32,12 @@ A full-stack operations tool for a small wholesale coffee roaster: orders, the d
 ```
 Browser ── React dashboard (Netlify)
               │  fetch /api/v1/...  (Bearer JWT, refresh token rotation)
+              │  GET /api/v1/events (Server-Sent Events, live changes)
               ▼
            Express API (Render) ── Zod validation ── business rules
               │  transactions, row locks
               ▼
-           PostgreSQL (Neon)
+           PostgreSQL (Neon)  ── LISTEN/NOTIFY fans changes out to every API instance
 ```
 
 ## Run it locally

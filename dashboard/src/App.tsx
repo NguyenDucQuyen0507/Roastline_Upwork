@@ -5,8 +5,12 @@ import {
   ApiError,
   can,
   cancelBatch,
+  CLIENT_ID,
   fetchCoffees,
+  listen,
   type Coffee,
+  type LiveEvent,
+  type LiveStatus,
   fetchBatches,
   fetchOrders,
   fetchShippedByWeek,
@@ -41,7 +45,7 @@ import { CustomersTable } from './components/CustomersTable';
 
 type Theme = 'light' | 'dark';
 
-const ROLE_LABEL = { admin: 'Admin', production: 'Production', viewer: 'Viewer (read only)' } as const;
+const ROLE_LABEL = { admin: 'Admin', production: 'Production', viewer: 'Viewer, read only' } as const;
 const initials = (name: string) =>
   name
     .split(' ')
@@ -88,6 +92,7 @@ export default function App() {
   const [shipped, setShipped] = useState<ShippedWeek[]>([]);
   const [coffees, setCoffees] = useState<Coffee[]>([]);
   const [form, setForm] = useState<OpenForm>(null);
+  const [live, setLive] = useState<LiveStatus>('connecting');
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -211,6 +216,50 @@ export default function App() {
     setBatches(b);
     setGreenStock(s);
   }, []);
+
+  // ---- live updates from other users (and other tabs) ----
+  const reloadTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  /** Debounced reload of one resource, so a burst of events causes one request. */
+  const reloadSoon = useCallback(
+    (what: 'orders' | 'schedule' | 'stock' | 'all') => {
+      clearTimeout(reloadTimers.current[what]);
+      reloadTimers.current[what] = setTimeout(async () => {
+        try {
+          if (what === 'orders' || what === 'all') {
+            const list = await fetchOrders();
+            setOrders(list);
+            // Keep an open order drawer in step with the server.
+            setOpen((cur) => (cur ? (list.find((x) => x.id === cur.id) ?? null) : cur));
+          }
+          if (what === 'schedule' || what === 'all') await reloadSchedule();
+          if (what === 'stock') setGreenStock(await fetchStock());
+        } catch {
+          /* the next event or reconnect will try again */
+        }
+      }, 250);
+    },
+    [reloadSchedule],
+  );
+
+  useEffect(() => {
+    if (!user) return;
+    let connectedBefore = false;
+    const stop = listen({
+      onStatus: setLive,
+      onConnected: () => {
+        // Anything could have changed while we were disconnected.
+        if (connectedBefore) reloadSoon('all');
+        connectedBefore = true;
+      },
+      onEvent: (e: LiveEvent) => {
+        if (e.type.startsWith('order.')) reloadSoon('orders');
+        else if (e.type.startsWith('batch.')) reloadSoon('schedule');
+        else reloadSoon('stock');
+        if (e.source !== CLIENT_ID) setToast(e.summary);
+      },
+    });
+    return stop;
+  }, [user?.id, reloadSoon]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onOrderCreated = useCallback((o: Order) => {
     setOrders((list) => [...list, o]);
@@ -339,6 +388,10 @@ export default function App() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
+          <span className={`live live-${live}`} role="status" title={live === 'live' ? 'Receiving changes as they happen' : undefined}>
+            <span className="live-dot" aria-hidden="true" />
+            {live === 'live' ? 'Live' : live === 'connecting' ? 'Connecting…' : 'Offline, retrying'}
+          </span>
           <button
             type="button"
             className="icon-btn"

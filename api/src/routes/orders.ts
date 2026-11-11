@@ -4,6 +4,7 @@ import { COFFEE_IDS, GRINDS, ORDER_STATUSES, TODAY, nextStatus, round2, type Ord
 import { coffees } from '../seed.js';
 import { ApiError, notFound, parse, requireRole } from '../http.js';
 import type { Store, Tx } from '../store/index.js';
+import { eventFor } from '../events.js';
 
 const priceOf = (id: string) => coffees.find((c) => c.id === id)!.pricePerKg;
 const nameOf = (id: string) => coffees.find((c) => c.id === id)!.name;
@@ -102,7 +103,11 @@ export function ordersRouter(store: Store) {
 
   r.post('/', requireRole('admin'), async (req, res) => {
     const body = parse(newOrder, req.body);
-    const order = await store.tx((t) => t.insertOrder({ status: 'New', ...body }));
+    const order = await store.tx(async (t) => {
+      const order = await t.insertOrder({ status: 'New', ...body });
+      await t.emit(eventFor(req, 'order.created', order.id, `created ${order.id} for ${order.customer}`));
+      return order;
+    });
     res.status(201).location(`/api/v1/orders/${order.id}`).json(presentOrder(order));
   });
 
@@ -122,6 +127,7 @@ export function ordersRouter(store: Store) {
       }
       Object.assign(order, body);
       await t.updateOrder(order);
+      await t.emit(eventFor(req, 'order.updated', order.id, `edited ${order.id} (${order.customer})`));
       return order;
     });
     res.json(presentOrder(order));
@@ -141,6 +147,7 @@ export function ordersRouter(store: Store) {
       }
       order.status = status;
       await t.updateOrder(order);
+      await t.emit(eventFor(req, 'order.updated', order.id, `moved ${order.id} to ${status}`));
       return order;
     });
     res.json(presentOrder(order));

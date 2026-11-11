@@ -1,6 +1,6 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { z } from 'zod';
-import { verifyAccessToken, type AuthUser } from './auth.js';
+import { verifyAccessToken, type TokenUser } from './auth.js';
 import type { Role } from './domain.js';
 
 declare global {
@@ -8,7 +8,7 @@ declare global {
   namespace Express {
     interface Request {
       /** Set by `authenticate` for signed-in requests. */
-      user?: AuthUser;
+      user?: TokenUser;
     }
   }
 }

@@ -11,6 +11,9 @@
 import type { Batch, GreenStock, Order, OrderStatus, ShippedWeek } from './data';
 
 const BASE = (import.meta.env.VITE_API_URL ?? '/api/v1').replace(/\/$/, '');
+
+/** Identifies this browser tab, so it can recognise its own changes in the live event stream. */
+export const CLIENT_ID = Math.random().toString(36).slice(2, 12);
 const REFRESH_KEY = 'roastline-refresh-token';
 
 export type Role = 'admin' | 'production' | 'viewer';
@@ -89,6 +92,7 @@ async function send(path: string, init: RequestInit, token: string | null): Prom
         Accept: 'application/json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'X-Client-Id': CLIENT_ID,
         ...init.headers,
       },
     });
@@ -324,4 +328,97 @@ export function fieldErrors(e: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   for (const d of e.details as { path: string; message: string }[]) out[d.path || 'form'] ??= d.message;
   return out;
+}
+
+/* ---------- live events (Server-Sent Events over fetch) ---------- */
+
+export interface LiveEvent {
+  type: 'order.created' | 'order.updated' | 'batch.created' | 'batch.cancelled' | 'stock.received';
+  id: string;
+  summary: string;
+  by: { id: string; name: string };
+  source?: string;
+  at: string;
+}
+
+export type LiveStatus = 'connecting' | 'live' | 'offline';
+
+/**
+ * Listens to GET /events. EventSource can't send an Authorization header, so
+ * the stream is read with fetch. Reconnects with backoff; after every
+ * (re)connect `onConnected` runs so the caller can reload anything it missed.
+ * The server ends the stream when the access token expires; the next attempt
+ * refreshes the token first. Returns a function that stops listening.
+ */
+export function listen(handlers: {
+  onEvent: (e: LiveEvent) => void;
+  onStatus: (s: LiveStatus) => void;
+  onConnected: () => void;
+}): () => void {
+  let stopped = false;
+  let ctrl: AbortController | null = null;
+  let attempt = 0;
+
+  const run = async () => {
+    while (!stopped) {
+      handlers.onStatus('connecting');
+      ctrl = new AbortController();
+      try {
+        if (!accessToken) await refreshSession();
+        let res = await fetch(`${BASE}/events`, {
+          headers: { Authorization: `Bearer ${accessToken}`, Accept: 'text/event-stream' },
+          signal: ctrl.signal,
+        });
+        if (res.status === 401) {
+          await refreshSession();
+          res = await fetch(`${BASE}/events`, {
+            headers: { Authorization: `Bearer ${accessToken}`, Accept: 'text/event-stream' },
+            signal: ctrl.signal,
+          });
+        }
+        if (!res.ok || !res.body) throw new Error(`events: HTTP ${res.status}`);
+
+        attempt = 0;
+        handlers.onStatus('live');
+        handlers.onConnected();
+
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          // Events are separated by a blank line; keep any partial event for the next chunk.
+          const parts = buffer.split(/\r?\n\r?\n/);
+          buffer = parts.pop() ?? '';
+          for (const part of parts) {
+            const data = part
+              .split(/\r?\n/)
+              .filter((l) => l.startsWith('data:'))
+              .map((l) => l.slice(5).trimStart())
+              .join('\n');
+            if (!data) continue; // comments and heartbeats
+            try {
+              handlers.onEvent(JSON.parse(data) as LiveEvent);
+            } catch {
+              /* ignore a malformed event */
+            }
+          }
+        }
+        // Stream ended normally (e.g. token expiry): reconnect right away.
+      } catch (e) {
+        if (stopped) return;
+        if (e instanceof ApiError && e.status === 401) return handlers.onStatus('offline'); // signed out
+        handlers.onStatus('offline');
+        const delay = [1000, 2000, 5000, 10000, 30000][Math.min(attempt++, 4)];
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  };
+  run();
+
+  return () => {
+    stopped = true;
+    ctrl?.abort();
+  };
 }
