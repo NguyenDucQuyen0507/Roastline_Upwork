@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { COFFEE_IDS, GRINDS, ORDER_STATUSES, TODAY, nextStatus, round2, type Order } from '../domain.js';
 import { coffees } from '../seed.js';
 import { ApiError, notFound, parse } from '../http.js';
-import type { Store } from '../store.js';
+import type { Store, Tx } from '../store/index.js';
 
 const priceOf = (id: string) => coffees.find((c) => c.id === id)!.pricePerKg;
 const nameOf = (id: string) => coffees.find((c) => c.id === id)!.name;
@@ -74,11 +74,9 @@ const statusChange = z.object({ status: z.enum(ORDER_STATUSES) });
 
 export function ordersRouter(store: Store) {
   const r = Router();
-  const find = (id: string) => store.orders.find((o) => o.id === id) ?? (() => { throw notFound(`Order ${id}`); })();
-
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const q = parse(listQuery, req.query);
-    let rows = store.orders.map(presentOrder);
+    let rows = (await store.read((t) => t.listOrders())).map(presentOrder);
 
     if (q.status) rows = rows.filter((o) => q.status!.includes(o.status));
     if (q.dueFrom) rows = rows.filter((o) => o.due >= q.dueFrom!);
@@ -96,39 +94,55 @@ export function ordersRouter(store: Store) {
     res.json({ data: rows.slice(start, start + q.pageSize), page: q.page, pageSize: q.pageSize, total: rows.length });
   });
 
-  r.get('/:id', (req, res) => {
-    res.json(presentOrder(find(req.params.id)));
-  });
-
-  r.post('/', (req, res) => {
-    const body = parse(newOrder, req.body);
-    const order: Order = { id: store.newOrderId(), status: 'New', ...body };
-    store.orders.push(order);
-    res.status(201).location(`/api/v1/orders/${order.id}`).json(presentOrder(order));
-  });
-
-  r.patch('/:id', (req, res) => {
-    const order = find(req.params.id);
-    const body = parse(orderUpdate, req.body);
-    if (order.status !== 'New') {
-      throw new ApiError(409, 'ORDER_LOCKED', `Only New orders can be edited (${order.id} is ${order.status})`);
-    }
-    Object.assign(order, body);
+  r.get('/:id', async (req, res) => {
+    const order = await store.read((t) => t.getOrder(req.params.id));
+    if (!order) throw notFound(`Order ${req.params.id}`);
     res.json(presentOrder(order));
   });
 
-  r.post('/:id/status', (req, res) => {
-    const order = find(req.params.id);
+  r.post('/', async (req, res) => {
+    const body = parse(newOrder, req.body);
+    const order = await store.tx((t) => t.insertOrder({ status: 'New', ...body }));
+    res.status(201).location(`/api/v1/orders/${order.id}`).json(presentOrder(order));
+  });
+
+  /** Loads an order with its row locked, so concurrent edits are applied one after the other. */
+  const lockOrder = async (t: Tx, id: string): Promise<Order> => {
+    const order = await t.getOrder(id, { lock: true });
+    if (!order) throw notFound(`Order ${id}`);
+    return order;
+  };
+
+  r.patch('/:id', async (req, res) => {
+    const body = parse(orderUpdate, req.body);
+    const order = await store.tx(async (t) => {
+      const order = await lockOrder(t, req.params.id);
+      if (order.status !== 'New') {
+        throw new ApiError(409, 'ORDER_LOCKED', `Only New orders can be edited (${order.id} is ${order.status})`);
+      }
+      Object.assign(order, body);
+      await t.updateOrder(order);
+      return order;
+    });
+    res.json(presentOrder(order));
+  });
+
+  r.post('/:id/status', async (req, res) => {
     const { status } = parse(statusChange, req.body);
-    const allowed = nextStatus(order.status);
-    if (status !== allowed) {
-      throw new ApiError(409, 'INVALID_TRANSITION', `Cannot move ${order.id} from ${order.status} to ${status}`, {
-        from: order.status,
-        to: status,
-        allowed,
-      });
-    }
-    order.status = status;
+    const order = await store.tx(async (t) => {
+      const order = await lockOrder(t, req.params.id);
+      const allowed = nextStatus(order.status);
+      if (status !== allowed) {
+        throw new ApiError(409, 'INVALID_TRANSITION', `Cannot move ${order.id} from ${order.status} to ${status}`, {
+          from: order.status,
+          to: status,
+          allowed,
+        });
+      }
+      order.status = status;
+      await t.updateOrder(order);
+      return order;
+    });
     res.json(presentOrder(order));
   });
 

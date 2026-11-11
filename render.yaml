@@ -13,5 +13,7 @@ services:
         value: "24"
       - key: API_KEY
         value: demo-key # public on purpose: visitors use it in Swagger "Try it out"
+      - key: DATABASE_URL
+        sync: false # PostgreSQL connection string (e.g. Neon free tier). Unset = in-memory demo data.
       - key: CORS_ORIGIN
         sync: false # e.g. https://roastline-dashboard.netlify.app

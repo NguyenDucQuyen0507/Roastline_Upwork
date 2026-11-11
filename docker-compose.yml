@@ -1,0 +1,32 @@
+# docker compose up --build   ->  API on http://localhost:3000/docs, PostgreSQL on localhost:5432
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: roastline
+      POSTGRES_PASSWORD: roastline
+      POSTGRES_DB: roastline
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/docker-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roastline -d roastline"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://roastline:roastline@db:5432/roastline
+      API_KEY: ${API_KEY:-demo-key}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -2,7 +2,7 @@
 
 REST API behind the [Roastline dashboard](../roastline-dashboard): an operations tool for a small wholesale coffee roaster. It covers orders, the daily roast schedule, green coffee inventory, customers and shipping reports.
 
-**Stack:** Node.js 20+, Express 5, TypeScript, Zod (validation), OpenAPI 3 + Swagger UI, Vitest + Supertest.
+**Stack:** Node.js 20+, Express 5, TypeScript, PostgreSQL (`pg`), Zod (validation), OpenAPI 3 + Swagger UI, Docker, Vitest + Supertest.
 
 ![Swagger UI](screenshots/1-swagger-overview.png)
 
@@ -17,27 +17,48 @@ REST API behind the [Roastline dashboard](../roastline-dashboard): an operations
   - Deliveries can't overfill storage (`422 STORAGE_CAPACITY_EXCEEDED`).
 - **One error shape everywhere:** `{ "error": { "code", "message", "details" } }`, with field-level details for validation errors, so the frontend can show messages next to the right input.
 - **Filtering, search, sorting and pagination** on `GET /orders`.
+- **PostgreSQL with safe concurrency.** Every write runs in a transaction. Order and stock rows are locked with `SELECT ... FOR UPDATE`, and each roaster's schedule with a transaction-scoped advisory lock, so two people can't book the same slot, spend the same green coffee or move an order twice. Tests fire parallel requests to prove it.
+- **Two interchangeable stores** behind one interface: PostgreSQL when `DATABASE_URL` is set, in-memory otherwise (zero-setup demo). Plain SQL migrations run automatically on start, and an empty database is seeded with demo data.
 - **API key** on write operations (`X-API-Key`, demo key `demo-key`). Reads are public.
-- **25 automated tests** covering the happy paths and every error code.
+- **28 automated tests**, run against both stores (56 runs), covering the happy paths, every error code and concurrent requests.
 
 ![409 conflict in Swagger UI](screenshots/2-batch-conflict-409.png)
 
 ## Run it
 
+**With Docker** (API + PostgreSQL):
+
+```bash
+docker compose up --build    # http://localhost:3000/docs
+```
+
+**With Node 20+** (in-memory store, no database needed):
+
 ```bash
 npm install
 npm run dev        # http://localhost:3000/docs
-npm test           # 25 tests
+npm test           # tests against the in-memory store
 npm run build && npm start   # production build
 ```
 
-Environment variables:
+**With Node + PostgreSQL in Docker:**
+
+```bash
+npm run db:up      # PostgreSQL on localhost:5432
+DATABASE_URL=postgres://roastline:roastline@localhost:5432/roastline npm run dev
+npm run test:pg    # tests against both stores
+DATABASE_URL=... npm run db:reset   # back to the demo data
+```
+
+Environment variables (see `.env.example`):
 
 | Name | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | Port to listen on |
+| `DATABASE_URL` | (unset) | PostgreSQL connection string. Unset = in-memory store |
 | `API_KEY` | `demo-key` | Key required in `X-API-Key` for write operations |
 | `CORS_ORIGIN` | (any) | Comma-separated list of origins allowed to call the API |
+| `TEST_DATABASE_URL` | (unset) | Also run the tests against this PostgreSQL database |
 
 ## Try it
 
@@ -82,15 +103,22 @@ Full details, schemas and examples: `/docs` (Swagger UI) or `/openapi.json`.
 
 ```
 openapi.yaml          API contract (source of truth for the docs)
+db/migrations/        SQL migrations, applied in order on start
 src/
   domain.ts           Types and business rules (no Express code)
   seed.ts             Demo data
-  store.ts            In-memory store; the only place to change for a real database
+  store/
+    types.ts          Store interface: read() and tx() units of work
+    postgres.ts       PostgreSQL implementation (transactions, row locks)
+    memory.ts         In-memory implementation (serialised transactions with rollback)
+  db/                 Migration runner and reset script
   http.ts             ApiError, validation helper, API key check, error handler
   routes/             One router per resource
   app.ts              Express app (createApp is used by tests and the server)
-  server.ts           Starts the server
-tests/api.test.ts     Vitest + Supertest
+  server.ts           Picks the store, starts the server, shuts down cleanly
+tests/api.test.ts     Vitest + Supertest, run against each store
+Dockerfile            Multi-stage production image
+docker-compose.yml    API + PostgreSQL
 ```
 
 ## Deploy (free) on Render
@@ -99,7 +127,8 @@ The repository includes a [Render Blueprint](render.yaml).
 
 1. Push this repository to GitHub.
 2. On [render.com](https://render.com): **New > Blueprint**, pick the repository.
-3. Set `CORS_ORIGIN` to the dashboard's URL (e.g. `https://roastline-dashboard.netlify.app`), or leave it empty to allow any origin.
-4. When the deploy finishes, the docs are at `https://<service>.onrender.com/docs`.
+3. Set `DATABASE_URL` to a PostgreSQL database. [Neon](https://neon.tech)'s free tier works well; Render's own free PostgreSQL is deleted after 30 days. Without it the API runs on the in-memory store.
+4. Set `CORS_ORIGIN` to the dashboard's URL (e.g. `https://roastline-dashboard.netlify.app`), or leave it empty to allow any origin.
+5. When the deploy finishes, the docs are at `https://<service>.onrender.com/docs`.
 
 `API_KEY` is set to `demo-key` on purpose so visitors can try write operations in Swagger UI. Free Render services sleep when idle, so the first request can take 30–50 seconds.

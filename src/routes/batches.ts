@@ -13,7 +13,7 @@ import {
 } from '../domain.js';
 import { coffees } from '../seed.js';
 import { ApiError, notFound, parse } from '../http.js';
-import type { Store } from '../store.js';
+import type { Store } from '../store/index.js';
 
 const nameOf = (id: string) => coffees.find((c) => c.id === id)!.name;
 
@@ -51,16 +51,15 @@ const newBatch = z
 export function batchesRouter(store: Store) {
   const r = Router();
 
-  r.get('/', (req, res) => {
+  r.get('/', async (req, res) => {
     const q = parse(listQuery, req.query);
-    const rows = store.batches
+    const rows = (await store.read((t) => t.listBatches()))
       .filter((b) => !q.roaster || b.roaster === q.roaster)
-      .sort((a, b) => a.startMin - b.startMin)
       .map(presentBatch);
     res.json({ data: rows });
   });
 
-  r.post('/', (req, res) => {
+  r.post('/', async (req, res) => {
     const body = parse(newBatch, req.body);
     const startMin = fromHHMM(body.start);
 
@@ -72,59 +71,64 @@ export function batchesRouter(store: Store) {
       });
     }
 
-    // 2. One batch at a time per roaster.
-    const clash = store.batches.find(
-      (b) => b.roaster === body.roaster && overlaps(startMin, body.durationMin, b.startMin, b.durationMin),
-    );
-    if (clash) {
-      throw new ApiError(
-        409,
-        'SCHEDULE_CONFLICT',
-        `${body.roaster} is busy from ${toHHMM(clash.startMin)} to ${toHHMM(clash.startMin + clash.durationMin)} (batch ${clash.id})`,
-        { conflictingBatchId: clash.id },
-      );
-    }
+    // Steps 2 and 3 run in one transaction, with the roaster and the stock rows
+    // locked, so two requests can't book the same slot or spend the same coffee.
+    const batch = await store.tx(async (t) => {
+      await t.lockRoaster(body.roaster);
 
-    // 3. Enough green coffee for every origin in the recipe. Check all before taking any.
-    const greenUse = greenNeeded(body.coffeeId, body.kg);
-    for (const g of greenUse) {
-      const s = store.stock.find((x) => x.coffeeId === g.coffeeId)!;
-      if (s.kg < g.kg) {
+      // 2. One batch at a time per roaster.
+      const clash = (await t.listBatches()).find(
+        (b) => b.roaster === body.roaster && overlaps(startMin, body.durationMin, b.startMin, b.durationMin),
+      );
+      if (clash) {
         throw new ApiError(
           409,
-          'INSUFFICIENT_GREEN_STOCK',
-          `Needs ${g.kg} kg of green ${nameOf(g.coffeeId)}, only ${s.kg} kg in stock`,
-          { coffeeId: g.coffeeId, neededKg: g.kg, availableKg: s.kg },
+          'SCHEDULE_CONFLICT',
+          `${body.roaster} is busy from ${toHHMM(clash.startMin)} to ${toHHMM(clash.startMin + clash.durationMin)} (batch ${clash.id})`,
+          { conflictingBatchId: clash.id },
         );
       }
-    }
-    for (const g of greenUse) {
-      const s = store.stock.find((x) => x.coffeeId === g.coffeeId)!;
-      s.kg = round1(s.kg - g.kg);
-    }
 
-    const batch: Batch = {
-      id: store.newBatchId(),
-      coffeeId: body.coffeeId,
-      roaster: body.roaster,
-      startMin,
-      durationMin: body.durationMin,
-      kg: body.kg,
-      roastLevel: body.roastLevel as Batch['roastLevel'],
-      greenUse,
-    };
-    store.batches.push(batch);
+      // 3. Enough green coffee for every origin in the recipe. Check all before taking any.
+      const greenUse = greenNeeded(body.coffeeId, body.kg);
+      const stock = [];
+      for (const g of greenUse) {
+        const s = (await t.getStock(g.coffeeId, { lock: true }))!;
+        if (s.kg < g.kg) {
+          throw new ApiError(
+            409,
+            'INSUFFICIENT_GREEN_STOCK',
+            `Needs ${g.kg} kg of green ${nameOf(g.coffeeId)}, only ${s.kg} kg in stock`,
+            { coffeeId: g.coffeeId, neededKg: g.kg, availableKg: s.kg },
+          );
+        }
+        stock.push({ s, g });
+      }
+      for (const { s, g } of stock) await t.setStockKg(s.coffeeId, round1(s.kg - g.kg));
+
+      return t.insertBatch({
+        coffeeId: body.coffeeId,
+        roaster: body.roaster,
+        startMin,
+        durationMin: body.durationMin,
+        kg: body.kg,
+        roastLevel: body.roastLevel as Batch['roastLevel'],
+        greenUse,
+      });
+    });
     res.status(201).location(`/api/v1/batches/${batch.id}`).json(presentBatch(batch));
   });
 
-  r.delete('/:id', (req, res) => {
-    const i = store.batches.findIndex((b) => b.id === req.params.id);
-    if (i === -1) throw notFound(`Batch ${req.params.id}`);
-    const [batch] = store.batches.splice(i, 1);
-    for (const g of batch.greenUse) {
-      const s = store.stock.find((x) => x.coffeeId === g.coffeeId)!;
-      s.kg = round1(Math.min(s.capacity, s.kg + g.kg));
-    }
+  r.delete('/:id', async (req, res) => {
+    // Cancelling puts the green coffee back (never beyond storage capacity).
+    await store.tx(async (t) => {
+      const batch = await t.deleteBatch(req.params.id);
+      if (!batch) throw notFound(`Batch ${req.params.id}`);
+      for (const g of batch.greenUse) {
+        const s = (await t.getStock(g.coffeeId, { lock: true }))!;
+        await t.setStockKg(s.coffeeId, round1(Math.min(s.capacity, s.kg + g.kg)));
+      }
+    });
     res.status(204).end();
   });
 
