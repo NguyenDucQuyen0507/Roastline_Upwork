@@ -1,10 +1,13 @@
 /** Change notifications pushed to dashboards over Server-Sent Events. */
+import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 
 export const EVENT_TYPES = ['order.created', 'order.updated', 'batch.created', 'batch.cancelled', 'stock.received'] as const;
 export type AppEventType = (typeof EVENT_TYPES)[number];
 
 export interface AppEvent {
+  /** Unique per event, so an instance can drop the NOTIFY echo of an event it already delivered. */
+  eid: string;
   type: AppEventType;
   /** Id of the order, batch or coffee that changed. */
   id: string;
@@ -23,6 +26,7 @@ export function eventFor(req: Request, type: AppEventType, id: string, summary: 
   const user = req.user!;
   const source = req.get('X-Client-Id');
   return {
+    eid: randomUUID(),
     type,
     id,
     summary: `${user.name} ${summary}`,

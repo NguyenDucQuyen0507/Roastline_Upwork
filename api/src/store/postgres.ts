@@ -90,7 +90,8 @@ async function insertBatchRows(db: Queryable, b: Batch) {
   }
 }
 
-function api(db: Queryable): Tx {
+/** `events` collects emit() calls in a transaction, so they can be delivered locally after COMMIT. */
+function api(db: Queryable, events?: AppEvent[]): Tx {
   return {
     async listOrders() {
       const { rows } = await db.query<OrderRow>(`${ORDER_SELECT} GROUP BY o.id ORDER BY o.id`);
@@ -177,7 +178,8 @@ function api(db: Queryable): Tx {
     },
 
     async emit(event) {
-      // NOTIFY inside a transaction is delivered on COMMIT and dropped on ROLLBACK.
+      events?.push(event);
+      // For other API instances. NOTIFY inside a transaction is delivered on COMMIT and dropped on ROLLBACK.
       await db.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(event)]);
     },
   };
@@ -186,7 +188,10 @@ function api(db: Queryable): Tx {
 export class PgStore implements Store {
   private listeners = new Set<Listener>();
   private listener?: pg.Client;
+  private keepAlive?: ReturnType<typeof setInterval>;
   private closed = false;
+  /** Ids of events already delivered locally, so their NOTIFY echo is skipped. */
+  private delivered = new Map<string, number>();
 
   private constructor(
     private pool: pg.Pool,
@@ -194,35 +199,65 @@ export class PgStore implements Store {
   ) {}
 
   /**
-   * One dedicated connection LISTENs for changes from every API instance and
-   * fans them out to this process's subscribers. Reconnects if it drops.
+   * Delivery has two paths. Events from this process go straight to its
+   * subscribers after COMMIT, so they never depend on LISTEN working.
+   * Events from other API instances arrive through LISTEN/NOTIFY; the id check
+   * drops the echo of our own events.
+   */
+  private deliver(event: AppEvent) {
+    const now = Date.now();
+    if (this.delivered.has(event.eid)) return;
+    this.delivered.set(event.eid, now);
+    for (const [eid, at] of this.delivered) if (now - at > 60_000) this.delivered.delete(eid);
+    for (const l of this.listeners) l(event);
+  }
+
+  /**
+   * One dedicated connection LISTENs for changes from other API instances.
+   * It reconnects when the connection errors or ends (Neon, for example, closes
+   * connections when it suspends an idle database), and a periodic query
+   * notices a connection that died silently.
    */
   private async listen() {
     if (this.closed) return;
-    const client = new pg.Client({ connectionString: this.connectionString });
-    const retry = () => {
+    if (/-pooler\./.test(this.connectionString)) {
+      console.warn('DATABASE_URL uses a pooled connection; LISTEN/NOTIFY needs a direct one, so changes from other instances won\'t arrive.');
+    }
+    const client = new pg.Client({ connectionString: this.connectionString, keepAlive: true });
+    let retrying = false;
+    const retry = (why: string) => {
+      if (retrying) return;
+      retrying = true;
+      clearInterval(this.keepAlive);
       client.removeAllListeners();
+      client.on('error', () => {});
       client.end().catch(() => {});
       if (this.listener === client) this.listener = undefined;
-      if (!this.closed) setTimeout(() => this.listen().catch(() => {}), 2000).unref();
+      if (!this.closed) {
+        console.warn(`Event listener disconnected (${why}); reconnecting.`);
+        setTimeout(() => this.listen().catch(() => {}), 2000).unref();
+      }
     };
-    client.on('error', retry);
+    client.on('error', (e) => retry(e.message));
+    client.on('end', () => retry('connection ended'));
     client.on('notification', (msg) => {
       if (msg.channel !== CHANNEL || !msg.payload) return;
-      let event: AppEvent;
       try {
-        event = JSON.parse(msg.payload);
+        this.deliver(JSON.parse(msg.payload));
       } catch {
-        return;
+        /* ignore a malformed payload */
       }
-      for (const l of this.listeners) l(event);
     });
     try {
       await client.connect();
       await client.query(`LISTEN ${CHANNEL}`);
       this.listener = client;
-    } catch {
-      retry();
+      this.keepAlive = setInterval(() => {
+        client.query('SELECT 1').catch((e) => retry(e.message));
+      }, 60_000);
+      this.keepAlive.unref();
+    } catch (e) {
+      retry((e as Error).message);
     }
   }
 
@@ -265,8 +300,10 @@ export class PgStore implements Store {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await fn(api(client));
+      const events: AppEvent[] = [];
+      const result = await fn(api(client, events));
       await client.query('COMMIT');
+      for (const e of events) this.deliver(e);
       return result;
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -317,6 +354,7 @@ export class PgStore implements Store {
 
   async close() {
     this.closed = true;
+    clearInterval(this.keepAlive);
     const l = this.listener;
     this.listener = undefined;
     await l?.end().catch(() => {});

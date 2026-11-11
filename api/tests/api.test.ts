@@ -376,6 +376,15 @@ describe.each(backends)('$name store', ({ make }) => {
       });
     });
 
+    it('delivers each change exactly once', async () => {
+      const seen: AppEvent[] = [];
+      const off = store.subscribe((e) => e.id === 'WH-2422' && seen.push(e));
+      await as().post('/api/v1/orders/WH-2422/status').send({ status: 'Roasting' });
+      await new Promise((r) => setTimeout(r, 500)); // let a NOTIFY echo arrive, if any
+      off();
+      expect(seen).toHaveLength(1);
+    });
+
     it('publishes nothing when the change is rejected', async () => {
       const got = nextEvent((e) => e.type === 'batch.created', 800);
       const res = await as()
