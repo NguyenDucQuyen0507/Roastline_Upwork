@@ -1,0 +1,612 @@
+openapi: 3.0.3
+info:
+  title: Roastline API
+  version: 1.0.0
+  license:
+    name: MIT
+  description: |
+    REST API behind the Roastline dashboard, an operations tool for a small
+    wholesale coffee roaster: orders, roast batches, green coffee inventory,
+    customers and shipping reports.
+
+    **Design notes**
+    - Prices are calculated on the server from the coffee catalog. Clients never send totals.
+    - Order status moves forward one step at a time: `New → Roasting → Packed → Shipped`.
+    - A roast batch is rejected if it overlaps another batch on the same roaster,
+      exceeds the roaster's capacity, or needs more green coffee than is in stock.
+    - Every error uses the same shape: `{ "error": { "code", "message", "details" } }`.
+    - Write operations need the `X-API-Key` header. The demo key is `demo-key`.
+
+    This demo keeps data in memory and resets when the server restarts.
+servers:
+  - url: /api/v1
+security: []
+tags:
+  - name: Orders
+    description: Wholesale orders and their production status.
+  - name: Batches
+    description: Today's roast schedule on the two roasters.
+  - name: Inventory
+    description: Green (unroasted) coffee stock and deliveries.
+  - name: Customers
+    description: Wholesale customers, built from order history.
+  - name: Coffees
+    description: The coffee catalog and prices.
+  - name: Reports
+    description: Aggregated numbers for charts.
+  - name: System
+    description: Service status.
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    OrderId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: WH-2421 }
+    BatchId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: B-3 }
+    CoffeeId:
+      name: coffeeId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/CoffeeId' }
+
+  responses:
+    BadRequest:
+      description: The request body or query is invalid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Request validation failed
+              details:
+                - path: lines.0.kg
+                  message: 'Too small: expected number to be >=0.5'
+    Unauthorized:
+      description: Missing or wrong `X-API-Key` header.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: { code: UNAUTHORIZED, message: A valid X-API-Key header is required }
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: { code: NOT_FOUND, message: Order WH-9999 not found }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, INVALID_TRANSITION, ORDER_LOCKED, SCHEDULE_CONFLICT, ROASTER_CAPACITY_EXCEEDED, INSUFFICIENT_GREEN_STOCK, STORAGE_CAPACITY_EXCEEDED, INTERNAL_ERROR]
+            message: { type: string }
+            details: {}
+
+    CoffeeId:
+      type: string
+      enum: [guji, huila, nyeri, cerrado, huehue, house, decaf]
+
+    Coffee:
+      type: object
+      required: [id, name, origin, pricePerKg, isBlend]
+      properties:
+        id: { $ref: '#/components/schemas/CoffeeId' }
+        name: { type: string, example: Ethiopia Guji Natural }
+        origin: { type: string, example: Ethiopia }
+        pricePerKg: { type: number, example: 34 }
+        isBlend: { type: boolean, description: Blends have no green stock of their own. }
+
+    Grind:
+      type: string
+      enum: [Whole bean, Espresso, Filter]
+
+    OrderStatus:
+      type: string
+      enum: [New, Roasting, Packed, Shipped]
+
+    OrderLine:
+      type: object
+      required: [coffeeId, coffee, kg, grind, lineTotal]
+      properties:
+        coffeeId: { $ref: '#/components/schemas/CoffeeId' }
+        coffee: { type: string, example: Kenya Nyeri AA }
+        kg: { type: number, example: 5 }
+        grind: { $ref: '#/components/schemas/Grind' }
+        lineTotal: { type: number, example: 190 }
+
+    Order:
+      type: object
+      required: [id, customer, city, lines, due, status, totalKg, total]
+      properties:
+        id: { type: string, example: WH-2421 }
+        customer: { type: string, example: Fieldnote Café }
+        city: { type: string, example: Portland }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/OrderLine' }
+        due: { type: string, format: date, example: '2026-11-06' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        totalKg: { type: number, example: 15 }
+        total: { type: number, description: 'USD, calculated by the server.', example: 450 }
+        note: { type: string, example: 'Deliver before 2 pm, back door.' }
+        nextStatus:
+          type: string
+          enum: [Roasting, Packed, Shipped, null]
+          nullable: true
+          description: The only status this order can move to next, or null when shipped.
+
+    OrderPage:
+      type: object
+      required: [data, page, pageSize, total]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Order' }
+        page: { type: integer, example: 1 }
+        pageSize: { type: integer, example: 20 }
+        total: { type: integer, description: Number of orders matching the filters., example: 22 }
+
+    NewOrderLine:
+      type: object
+      required: [coffeeId, kg, grind]
+      properties:
+        coffeeId: { $ref: '#/components/schemas/CoffeeId' }
+        kg: { type: number, minimum: 0.5, maximum: 200, example: 5 }
+        grind: { $ref: '#/components/schemas/Grind' }
+
+    NewOrder:
+      type: object
+      required: [customer, city, lines, due]
+      properties:
+        customer: { type: string, minLength: 2, maxLength: 80, example: Copperline Studio Café }
+        city: { type: string, minLength: 2, maxLength: 60, example: Seattle }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: '#/components/schemas/NewOrderLine' }
+        due: { type: string, format: date, description: Today or later., example: '2026-11-09' }
+        note: { type: string, maxLength: 280 }
+
+    OrderUpdate:
+      type: object
+      description: Only orders with status `New` can be edited.
+      minProperties: 1
+      properties:
+        due: { type: string, format: date }
+        note: { type: string, maxLength: 280 }
+
+    StatusChange:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/OrderStatus' }
+
+    Roaster:
+      type: string
+      enum: [Probat P12, Loring S15]
+
+    Batch:
+      type: object
+      required: [id, coffeeId, coffee, roaster, start, end, durationMin, kg, roastLevel, greenKgUsed]
+      properties:
+        id: { type: string, example: B-3 }
+        coffeeId: { $ref: '#/components/schemas/CoffeeId' }
+        coffee: { type: string, example: Ethiopia Guji Natural }
+        roaster:
+          allOf: [{ $ref: '#/components/schemas/Roaster' }]
+          example: Loring S15
+        start: { type: string, pattern: '^\d{2}:\d{2}$', example: '06:40' }
+        end: { type: string, example: '07:20' }
+        durationMin: { type: integer, example: 40 }
+        kg: { type: number, description: Roasted weight., example: 7 }
+        roastLevel: { type: integer, minimum: 1, maximum: 5, description: 1 is lightest., example: 1 }
+        greenKgUsed: { type: number, description: Green coffee consumed (roasting loses about 15% of weight)., example: 8.2 }
+
+    NewBatch:
+      type: object
+      required: [coffeeId, roaster, start, durationMin, kg, roastLevel]
+      properties:
+        coffeeId: { $ref: '#/components/schemas/CoffeeId' }
+        roaster: { $ref: '#/components/schemas/Roaster' }
+        start: { type: string, pattern: '^\d{2}:\d{2}$', example: '16:00' }
+        durationMin: { type: integer, minimum: 20, maximum: 120, example: 45 }
+        kg: { type: number, minimum: 1, example: 10, description: 'Roaster capacity: Probat P12 up to 12 kg, Loring S15 up to 15 kg.' }
+        roastLevel: { type: integer, minimum: 1, maximum: 5, example: 3 }
+
+    StockItem:
+      type: object
+      required: [coffeeId, coffee, origin, kg, reorderAt, capacity, level]
+      properties:
+        coffeeId: { $ref: '#/components/schemas/CoffeeId' }
+        coffee: { type: string, example: Kenya Nyeri AA }
+        origin: { type: string, example: Kenya }
+        kg: { type: number, example: 36 }
+        reorderAt: { type: number, example: 50 }
+        capacity: { type: number, example: 200 }
+        level:
+          type: string
+          enum: [ok, low, critical]
+          description: '`low` at or below the reorder point, `critical` at or below half of it.'
+
+    Receipt:
+      type: object
+      required: [kg]
+      properties:
+        kg: { type: number, minimum: 1, example: 60 }
+        supplierRef: { type: string, maxLength: 40, example: PO-1182 }
+
+    Customer:
+      type: object
+      required: [name, city, orderCount, totalSpent, lastOrderDue, openOrders]
+      properties:
+        name: { type: string, example: Lantern Coffee Bar }
+        city: { type: string, example: Portland }
+        orderCount: { type: integer, example: 2 }
+        openOrders: { type: integer, description: Orders not yet shipped., example: 1 }
+        totalSpent: { type: number, example: 824 }
+        lastOrderDue: { type: string, format: date }
+
+    WeeklyShipped:
+      type: object
+      properties:
+        week: { type: string, example: Oct 29 }
+        Brazil: { type: number }
+        Colombia: { type: number }
+        Ethiopia: { type: number }
+        Guatemala: { type: number }
+        Kenya: { type: number }
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [System]
+      summary: Health check
+      responses:
+        '200':
+          description: The API is running.
+          content:
+            application/json:
+              example: { status: ok }
+
+  /coffees:
+    get:
+      operationId: listCoffees
+      tags: [Coffees]
+      summary: List the coffee catalog with prices
+      responses:
+        '200':
+          description: All coffees.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Coffee' }
+
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [Orders]
+      summary: List orders with filters, search, sorting and pagination
+      parameters:
+        - name: status
+          in: query
+          description: One or more statuses, comma separated.
+          schema: { type: string, example: 'New,Roasting' }
+        - name: dueFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: dueTo
+          in: query
+          schema: { type: string, format: date }
+        - name: q
+          in: query
+          description: Searches order id, customer and city.
+          schema: { type: string, example: lantern }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [due, -due, total, -total], default: due }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: A page of orders.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    post:
+      operationId: createOrder
+      tags: [Orders]
+      summary: Create an order (total is calculated by the server)
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewOrder' }
+      responses:
+        '201':
+          description: Created. The `Location` header points to the new order.
+          headers:
+            Location:
+              schema: { type: string, example: /api/v1/orders/WH-2427 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /orders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      operationId: getOrder
+      tags: [Orders]
+      summary: Get one order
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateOrder
+      tags: [Orders]
+      summary: Edit the due date or note of a New order
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderUpdate' }
+      responses:
+        '200':
+          description: The updated order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The order is already in production and can no longer be edited.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: { code: ORDER_LOCKED, message: Only New orders can be edited (WH-2419 is Roasting) }
+
+  /orders/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      operationId: changeOrderStatus
+      tags: [Orders]
+      summary: Move an order to its next status
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatusChange' }
+      responses:
+        '200':
+          description: The order with its new status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The requested status is not the next step.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: INVALID_TRANSITION
+                  message: Cannot move WH-2421 from New to Shipped
+                  details: { from: New, to: Shipped, allowed: Roasting }
+
+  /batches:
+    get:
+      operationId: listBatches
+      tags: [Batches]
+      summary: Today's roast schedule, sorted by start time
+      parameters:
+        - name: roaster
+          in: query
+          schema: { $ref: '#/components/schemas/Roaster' }
+      responses:
+        '200':
+          description: Batches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Batch' }
+    post:
+      operationId: createBatch
+      tags: [Batches]
+      summary: Schedule a roast batch (checks overlap, capacity and green stock)
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewBatch' }
+      responses:
+        '201':
+          description: Scheduled. Green stock is reduced by `greenKgUsed`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Batch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Overlaps another batch on the same roaster, or not enough green coffee.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                overlap:
+                  value:
+                    error:
+                      code: SCHEDULE_CONFLICT
+                      message: Probat P12 is busy from 15:00 to 15:55 (batch B-12)
+                      details: { conflictingBatchId: B-12 }
+                stock:
+                  value:
+                    error:
+                      code: INSUFFICIENT_GREEN_STOCK
+                      message: Needs 14.1 kg of green Kenya Nyeri AA, only 36 kg in stock
+                      details: { neededKg: 14.1, availableKg: 36 }
+        '422':
+          description: Batch is larger than the roaster can handle.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: { code: ROASTER_CAPACITY_EXCEEDED, message: Probat P12 roasts at most 12 kg per batch }
+
+  /batches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/BatchId'
+    delete:
+      operationId: cancelBatch
+      tags: [Batches]
+      summary: Cancel a batch and return its green coffee to stock
+      security: [{ ApiKey: [] }]
+      responses:
+        '204': { description: Cancelled. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /inventory:
+    get:
+      operationId: listInventory
+      tags: [Inventory]
+      summary: Green coffee stock with reorder levels
+      parameters:
+        - name: level
+          in: query
+          description: Only return items at this level.
+          schema: { type: string, enum: [ok, low, critical] }
+      responses:
+        '200':
+          description: Stock items, lowest stock first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/StockItem' }
+
+  /inventory/{coffeeId}/receipts:
+    parameters:
+      - $ref: '#/components/parameters/CoffeeId'
+    post:
+      operationId: recordReceipt
+      tags: [Inventory]
+      summary: Record a delivery of green coffee
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Receipt' }
+      responses:
+        '200':
+          description: The updated stock item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: The delivery would exceed storage capacity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: STORAGE_CAPACITY_EXCEEDED
+                  message: Only 152 kg of space left for Kenya Nyeri AA
+                  details: { spaceLeftKg: 152 }
+
+  /customers:
+    get:
+      operationId: listCustomers
+      tags: [Customers]
+      summary: Customers with order history, built from orders
+      parameters:
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, -totalSpent, -lastOrderDue], default: -totalSpent }
+      responses:
+        '200':
+          description: Customers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Customer' }
+
+  /reports/shipped-by-week:
+    get:
+      operationId: getShippedByWeek
+      tags: [Reports]
+      summary: Kilograms shipped per week by origin (last 6 weeks)
+      responses:
+        '200':
+          description: Weekly totals.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WeeklyShipped' }
