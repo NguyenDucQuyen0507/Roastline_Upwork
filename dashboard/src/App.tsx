@@ -309,13 +309,18 @@ export default function App() {
     const open = orders.filter((o) => o.status === 'New').length;
     const week = orders.filter((o) => o.due >= '2026-11-02' && o.due <= '2026-11-08');
     const low = greenStock.filter((s) => s.kg < s.reorderAt);
+    // Production doesn't see order values: show today's roasting volume instead of revenue.
+    const roastKg = batches.reduce((s, b) => s + b.kg, 0);
+    const third = can.seeFinancials(user)
+      ? { label: 'Booked this week', value: usd(week.reduce((s, o) => s + (o.total ?? 0), 0)), note: `${week.length} wholesale orders` }
+      : { label: 'Roasting today', value: `${roastKg} kg`, note: `${batches.length} batches on 2 roasters` };
     return [
       { label: 'Leaving today', value: `${leaving.reduce((s, o) => s + orderKg(o), 0)} kg`, note: `${ready} of ${leaving.length} orders packed` },
       { label: 'New orders', value: String(open), note: 'Waiting to be scheduled' },
-      { label: 'Booked this week', value: usd(week.reduce((s, o) => s + o.total, 0)), note: `${week.length} wholesale orders` },
+      third,
       { label: 'Green coffee low', value: String(low.length), note: low.map((s) => s.origin).join(' and '), alert: low.length > 0 },
     ];
-  }, [orders, greenStock]);
+  }, [orders, greenStock, batches, user]);
 
   if (checkingSession) {
     return (
@@ -433,7 +438,7 @@ export default function App() {
           <RoastSchedule batches={batches} />
 
           <div className="grid">
-            <OrdersTable orders={orders} query={query} onOpen={setOpen} onNew={can.editOrders(user) ? () => setForm({ kind: 'newOrder' }) : undefined} />
+            <OrdersTable orders={orders} query={query} onOpen={setOpen} showTotals={can.seeFinancials(user)} onNew={can.editOrders(user) ? () => setForm({ kind: 'newOrder' }) : undefined} />
             <div className="side-stack">
               <GreenStock stock={greenStock} />
               <ShippedChart data={shipped} />
@@ -447,6 +452,7 @@ export default function App() {
               orders={orders}
               query={query}
               onOpen={setOpen}
+              showTotals={can.seeFinancials(user)}
               onNew={can.editOrders(user) ? () => setForm({ kind: 'newOrder' }) : undefined}
               pageSize={15}
             />
@@ -477,7 +483,7 @@ export default function App() {
             </div>
           )}
 
-          {view === 'customers' && <CustomersTable orders={orders} query={query} />}
+          {view === 'customers' && <CustomersTable key={user.role} orders={orders} query={query} showRevenue={can.seeFinancials(user)} />}
           </>
           )}
         </main>

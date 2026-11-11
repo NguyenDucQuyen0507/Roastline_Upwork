@@ -15,8 +15,17 @@ interface CustomerRow {
 type SortKey = 'name' | 'orders' | 'kg' | 'revenue' | 'last';
 
 /** Wholesale customers aggregated from orders, for the Customers page. */
-export function CustomersTable({ orders, query }: { orders: Order[]; query: string }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'revenue', dir: -1 });
+export function CustomersTable({
+  orders,
+  query,
+  showRevenue = true,
+}: {
+  orders: Order[];
+  query: string;
+  /** False for roles that don't see financial data: no Revenue column, ranked by volume instead. */
+  showRevenue?: boolean;
+}) {
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: showRevenue ? 'revenue' : 'kg', dir: -1 });
 
   const rows = useMemo(() => {
     const map = new Map<string, CustomerRow>();
@@ -25,7 +34,7 @@ export function CustomersTable({ orders, query }: { orders: Order[]; query: stri
       r.orders += 1;
       r.open += o.status === 'Shipped' ? 0 : 1;
       r.kg += orderKg(o);
-      r.revenue += o.total;
+      r.revenue += o.total ?? 0;
       if (o.due > r.last) r.last = o.due;
       map.set(o.customer, r);
     }
@@ -76,7 +85,7 @@ export function CustomersTable({ orders, query }: { orders: Order[]; query: stri
                 {header('orders', 'Orders', true)}
                 <th scope="col" className="num">Open</th>
                 {header('kg', 'Kg', true)}
-                {header('revenue', 'Revenue', true)}
+                {showRevenue && header('revenue', 'Revenue', true)}
                 {header('last', 'Latest due')}
               </tr>
             </thead>
@@ -90,7 +99,7 @@ export function CustomersTable({ orders, query }: { orders: Order[]; query: stri
                   <td className="num">{r.orders}</td>
                   <td className="num">{r.open || '–'}</td>
                   <td className="num">{r.kg}</td>
-                  <td className="num">{usd(r.revenue)}</td>
+                  {showRevenue && <td className="num">{usd(r.revenue)}</td>}
                   <td className="nowrap">{dueLabel(r.last)}</td>
                 </tr>
               ))}

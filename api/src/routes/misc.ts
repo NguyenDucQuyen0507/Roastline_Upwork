@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { COFFEE_IDS, round1, stockLevel, type StockRecord } from '../domain.js';
 import { coffees, shippedByWeek } from '../seed.js';
-import { ApiError, notFound, parse, requireRole } from '../http.js';
+import { ApiError, financials, financialsForbidden, notFound, parse, requireRole } from '../http.js';
 import type { Store } from '../store/index.js';
 import { presentOrder } from './orders.js';
 import { eventFor } from '../events.js';
@@ -24,7 +24,10 @@ function presentStock(s: StockRecord) {
 
 export function coffeesRouter() {
   const r = Router();
-  r.get('/', (_req, res) => res.json({ data: coffees }));
+  r.get('/', (req, res) => {
+    const fin = financials(req);
+    res.json({ data: coffees.map(({ pricePerKg, ...c }) => (fin ? { ...c, pricePerKg } : c)) });
+  });
   return r;
 }
 
@@ -75,19 +78,23 @@ export function inventoryRouter(store: Store) {
   return r;
 }
 
-const customersQuery = z.object({ sort: z.enum(['name', '-totalSpent', '-lastOrderDue']).default('-totalSpent') });
+const customersQuery = z.object({ sort: z.enum(['name', '-totalSpent', '-lastOrderDue']).optional() });
 
 export function customersRouter(store: Store) {
   const r = Router();
   r.get('/', async (req, res) => {
-    const { sort } = parse(customersQuery, req.query);
+    const fin = financials(req);
+    const q = parse(customersQuery, req.query);
+    if (q.sort === '-totalSpent' && !fin) throw financialsForbidden('sort customers by spend');
+    // Default: biggest customers first, or by name for roles that don't see spend.
+    const sort = q.sort ?? (fin ? '-totalSpent' : 'name');
     const byName = new Map<string, { name: string; city: string; orderCount: number; openOrders: number; totalSpent: number; lastOrderDue: string }>();
 
-    for (const o of (await store.read((t) => t.listOrders())).map(presentOrder)) {
+    for (const o of (await store.read((t) => t.listOrders())).map((o) => presentOrder(o))) {
       const c = byName.get(o.customer) ?? { name: o.customer, city: o.city, orderCount: 0, openOrders: 0, totalSpent: 0, lastOrderDue: o.due };
       c.orderCount += 1;
       if (o.status !== 'Shipped') c.openOrders += 1;
-      c.totalSpent = Math.round((c.totalSpent + o.total) * 100) / 100;
+      c.totalSpent = Math.round((c.totalSpent + o.total!) * 100) / 100;
       if (o.due > c.lastOrderDue) c.lastOrderDue = o.due;
       byName.set(o.customer, c);
     }
@@ -99,7 +106,7 @@ export function customersRouter(store: Store) {
           ? b.totalSpent - a.totalSpent
           : b.lastOrderDue.localeCompare(a.lastOrderDue),
     );
-    res.json({ data: rows });
+    res.json({ data: fin ? rows : rows.map(({ totalSpent: _spent, ...c }) => c) });
   });
   return r;
 }

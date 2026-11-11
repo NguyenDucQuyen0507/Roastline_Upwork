@@ -306,6 +306,51 @@ describe.each(backends)('$name store', ({ make }) => {
     });
   });
 
+  describe('financial data by role', () => {
+    const MONEY = /"(total|lineTotal|pricePerKg|totalSpent)":\s*[\d.]/;
+
+    it('leaves prices and order values out for production', async () => {
+      const list = await as('production').get('/api/v1/orders?pageSize=100');
+      expect(list.status).toBe(200);
+      expect(list.body.total).toBe(22); // the pagination count is still there
+      expect(JSON.stringify(list.body.data)).not.toMatch(MONEY);
+      expect(list.body.data[0]).toHaveProperty('totalKg');
+
+      const one = await as('production').get('/api/v1/orders/WH-2421');
+      expect(one.body).not.toHaveProperty('total');
+      expect(one.body.lines[0]).not.toHaveProperty('lineTotal');
+
+      const moved = await as('production').post('/api/v1/orders/WH-2421/status').send({ status: 'Roasting' });
+      expect(JSON.stringify(moved.body)).not.toMatch(MONEY);
+
+      const catalog = await as('production').get('/api/v1/coffees');
+      expect(catalog.body.data[0]).not.toHaveProperty('pricePerKg');
+
+      const customers = await as('production').get('/api/v1/customers');
+      expect(JSON.stringify(customers.body)).not.toMatch(MONEY);
+      const names = customers.body.data.map((c: { name: string }) => c.name);
+      expect(names).toEqual([...names].sort((a: string, b: string) => a.localeCompare(b))); // not ranked by spend
+    });
+
+    it('refuses to sort by hidden values for production', async () => {
+      for (const url of ['/api/v1/orders?sort=-total', '/api/v1/orders?sort=total', '/api/v1/customers?sort=-totalSpent']) {
+        const res = await as('production').get(url);
+        expect(res.status, url).toBe(403);
+        expect(res.body.error.code).toBe('FORBIDDEN');
+      }
+    });
+
+    it('shows financial data to admin and viewer', async () => {
+      for (const role of ['admin', 'viewer'] as const) {
+        const one = await as(role).get('/api/v1/orders/WH-2421');
+        expect(one.body.total, role).toBe(450);
+        expect(one.body.lines[0]).toHaveProperty('lineTotal');
+        expect((await as(role).get('/api/v1/coffees')).body.data[0]).toHaveProperty('pricePerKg');
+        expect((await as(role).get('/api/v1/customers')).body.data[0]).toHaveProperty('totalSpent');
+      }
+    });
+  });
+
   describe('live events', () => {
     /** Collects events from the store until `pred` matches one (PostgreSQL delivers them asynchronously). */
     const nextEvent = (pred: (e: AppEvent) => boolean, ms = 3000) =>

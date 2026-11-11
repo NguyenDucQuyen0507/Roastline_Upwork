@@ -14,6 +14,13 @@ export const ROASTERS = ['Probat P12', 'Loring S15'] as const;
 export const ROLES = ['admin', 'production', 'viewer'] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * Prices, order values and revenue. The roasting floor (production) works
+ * without them; admin and viewer (e.g. accounts) see them.
+ */
+export const FINANCIAL_ROLES: readonly Role[] = ['admin', 'viewer'];
+export const seesFinancials = (role: Role | undefined) => !!role && FINANCIAL_ROLES.includes(role);
+
 export interface User {
   id: string;
   email: string;

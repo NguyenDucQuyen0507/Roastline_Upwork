@@ -96,7 +96,7 @@ export function OrderDrawer({
           <tfoot>
             <tr>
               <td colSpan={2}>Total, {orderKg(order)} kg</td>
-              <td className="num">{usd(order.total)}</td>
+              <td className="num">{order.total !== undefined && usd(order.total)}</td>
             </tr>
           </tfoot>
         </table>

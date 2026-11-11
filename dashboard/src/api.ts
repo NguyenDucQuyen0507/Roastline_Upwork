@@ -28,6 +28,8 @@ export interface User {
 export const can = {
   advanceOrder: (u: User | null) => u?.role === 'admin' || u?.role === 'production',
   editOrders: (u: User | null) => u?.role === 'admin',
+  /** Prices, order values and revenue (the API leaves them out for production). */
+  seeFinancials: (u: User | null) => u?.role === 'admin' || u?.role === 'viewer',
   manageBatches: (u: User | null) => u?.role === 'admin' || u?.role === 'production',
   receiveStock: (u: User | null) => u?.role === 'admin' || u?.role === 'production',
 };
@@ -167,11 +169,11 @@ interface ApiOrder {
   id: string;
   customer: string;
   city: string;
-  lines: { coffeeId: string; coffee: string; kg: number; grind: Order['lines'][number]['grind']; lineTotal: number }[];
+  lines: { coffeeId: string; coffee: string; kg: number; grind: Order['lines'][number]['grind']; lineTotal?: number }[];
   due: string;
   status: OrderStatus;
   totalKg: number;
-  total: number;
+  total?: number;
   note?: string;
   nextStatus: OrderStatus | null;
 }
@@ -215,7 +217,7 @@ const toOrder = (o: ApiOrder): Order => ({
   lines: o.lines.map((l) => ({ coffee: l.coffee, kg: l.kg, grind: l.grind })),
   due: o.due,
   status: o.status,
-  total: o.total,
+  ...(o.total !== undefined && { total: o.total }),
   ...(o.note && { note: o.note }),
 });
 
@@ -277,7 +279,7 @@ export interface Coffee {
   id: string;
   name: string;
   origin: string;
-  pricePerKg: number;
+  pricePerKg?: number;
   isBlend: boolean;
 }
 

@@ -111,7 +111,8 @@ export function NewOrderForm({
               <select value={l.coffeeId} onChange={(e) => (setLine(i, { coffeeId: e.target.value }), clear(`lines.${i}.coffeeId`))}>
                 {coffees.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} ({usd(c.pricePerKg)}/kg)
+                    {c.name}
+                    {c.pricePerKg !== undefined && ` (${usd(c.pricePerKg)}/kg)`}
                   </option>
                 ))}
               </select>

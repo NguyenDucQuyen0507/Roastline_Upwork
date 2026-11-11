@@ -29,6 +29,9 @@ info:
     | `production@roastline.dev` | production | move orders, schedule and cancel batches, record deliveries |
     | `viewer@roastline.dev` | viewer | read only |
 
+    Production doesn't see financial data: `total`, `lineTotal`, `pricePerKg` and
+    `totalSpent` are left out of its responses, and sorting by them returns 403.
+
     The password for all three is `roastline-demo`. The demo data is reset every night.
 servers:
   - url: /api/v1
@@ -193,12 +196,12 @@ components:
 
     Coffee:
       type: object
-      required: [id, name, origin, pricePerKg, isBlend]
+      required: [id, name, origin, isBlend]
       properties:
         id: { $ref: '#/components/schemas/CoffeeId' }
         name: { type: string, example: Ethiopia Guji Natural }
         origin: { type: string, example: Ethiopia }
-        pricePerKg: { type: number, example: 34 }
+        pricePerKg: { type: number, example: 34, description: 'USD per kg. Only for roles that see financial data (admin, viewer); left out for production.' }
         isBlend: { type: boolean, description: Blends have no green stock of their own. }
 
     Grind:
@@ -211,17 +214,17 @@ components:
 
     OrderLine:
       type: object
-      required: [coffeeId, coffee, kg, grind, lineTotal]
+      required: [coffeeId, coffee, kg, grind]
       properties:
         coffeeId: { $ref: '#/components/schemas/CoffeeId' }
         coffee: { type: string, example: Kenya Nyeri AA }
         kg: { type: number, example: 5 }
         grind: { $ref: '#/components/schemas/Grind' }
-        lineTotal: { type: number, example: 190 }
+        lineTotal: { type: number, example: 190, description: 'Only for roles that see financial data (admin, viewer); left out for production.' }
 
     Order:
       type: object
-      required: [id, customer, city, lines, due, status, totalKg, total]
+      required: [id, customer, city, lines, due, status, totalKg]
       properties:
         id: { type: string, example: WH-2421 }
         customer: { type: string, example: Fieldnote Café }
@@ -232,7 +235,7 @@ components:
         due: { type: string, format: date, example: '2026-11-06' }
         status: { $ref: '#/components/schemas/OrderStatus' }
         totalKg: { type: number, example: 15 }
-        total: { type: number, description: 'USD, calculated by the server.', example: 450 }
+        total: { type: number, description: 'USD, calculated by the server. Only for roles that see financial data (admin, viewer); left out for production.', example: 450 }
         note: { type: string, example: 'Deliver before 2 pm, back door.' }
         nextStatus:
           type: string
@@ -343,13 +346,13 @@ components:
 
     Customer:
       type: object
-      required: [name, city, orderCount, totalSpent, lastOrderDue, openOrders]
+      required: [name, city, orderCount, lastOrderDue, openOrders]
       properties:
         name: { type: string, example: Lantern Coffee Bar }
         city: { type: string, example: Portland }
         orderCount: { type: integer, example: 2 }
         openOrders: { type: integer, description: Orders not yet shipped., example: 1 }
-        totalSpent: { type: number, example: 824 }
+        totalSpent: { type: number, example: 824, description: 'USD. Only for roles that see financial data (admin, viewer); left out for production.' }
         lastOrderDue: { type: string, format: date }
 
     WeeklyShipped:
@@ -525,6 +528,7 @@ paths:
           schema: { type: string, example: lantern }
         - name: sort
           in: query
+          description: Sorting by `total` needs a role that sees financial data (403 otherwise).
           schema: { type: string, enum: [due, -due, total, -total], default: due }
         - name: page
           in: query
@@ -540,6 +544,7 @@ paths:
               schema: { $ref: '#/components/schemas/OrderPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       operationId: createOrder
       tags: [Orders]
@@ -785,7 +790,10 @@ paths:
       parameters:
         - name: sort
           in: query
-          schema: { type: string, enum: [name, -totalSpent, -lastOrderDue], default: -totalSpent }
+          description: |
+            Defaults to `-totalSpent` for roles that see financial data and `name` for the others.
+            Sorting by `-totalSpent` without financial access returns 403.
+          schema: { type: string, enum: [name, -totalSpent, -lastOrderDue] }
       responses:
         '200':
           description: Customers.
@@ -798,6 +806,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Customer' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /reports/shipped-by-week:
     get:

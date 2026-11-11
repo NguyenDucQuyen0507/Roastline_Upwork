@@ -1,7 +1,7 @@
-import type { ErrorRequestHandler, RequestHandler } from 'express';
+import type { ErrorRequestHandler, Request, RequestHandler } from 'express';
 import { z } from 'zod';
 import { verifyAccessToken, type TokenUser } from './auth.js';
-import type { Role } from './domain.js';
+import { FINANCIAL_ROLES, seesFinancials, type Role } from './domain.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -71,6 +71,15 @@ export const authenticate: RequestHandler = async (req, _res, next) => {
   req.user = result.user;
   next();
 };
+
+/** Whether this request's user may see prices, order values and revenue. */
+export const financials = (req: Request) => seesFinancials(req.user?.role);
+
+/** 403 for a query that would reveal financial data through filtering or sorting. */
+export const financialsForbidden = (what: string) =>
+  new ApiError(403, 'FORBIDDEN', `Your role can't see financial data, so it can't ${what}`, {
+    requiredRoles: FINANCIAL_ROLES,
+  });
 
 /** Allows the request only for the given roles. Use after `authenticate`. */
 export const requireRole =

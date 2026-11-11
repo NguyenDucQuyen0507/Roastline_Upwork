@@ -13,7 +13,8 @@ export interface Order {
   lines: OrderLine[];
   due: string; // ISO date
   status: OrderStatus;
-  total: number; // USD
+  /** USD. Missing for roles that don't see financial data. */
+  total?: number;
   note?: string;
 }
 

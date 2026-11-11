@@ -14,6 +14,7 @@ export function OrdersTable({
   query,
   onOpen,
   onNew,
+  showTotals = true,
   pageSize = 8,
 }: {
   orders: Order[];
@@ -21,6 +22,8 @@ export function OrdersTable({
   onOpen: (o: Order) => void;
   /** Shown as a "New order" button when the user may create orders. */
   onNew?: () => void;
+  /** False for roles that don't see order values: the Total column is left out. */
+  showTotals?: boolean;
   pageSize?: number;
 }) {
   const PAGE_SIZE = pageSize;
@@ -47,7 +50,7 @@ export function OrdersTable({
           o.lines.some((l) => l.coffee.toLowerCase().includes(q))),
     );
     const val = (o: Order) =>
-      sort.key === 'kg' ? orderKg(o) : sort.key === 'total' ? o.total : sort.key === 'customer' ? o.customer : o.due;
+      sort.key === 'kg' ? orderKg(o) : sort.key === 'total' ? (o.total ?? 0) : sort.key === 'customer' ? o.customer : o.due;
     if (sort.key === 'priority') {
       return [...list].sort((a, b) => {
         const sa = a.status === 'Shipped' ? 1 : 0;
@@ -132,7 +135,7 @@ export function OrdersTable({
                 {header('kg', 'Kg', 'num')}
                 {header('due', 'Due')}
                 <th scope="col">Status</th>
-                {header('total', 'Total', 'num')}
+                {showTotals && header('total', 'Total', 'num')}
               </tr>
             </thead>
             <tbody>
@@ -158,7 +161,7 @@ export function OrdersTable({
                   <td>
                     <StatusBadge status={o.status} />
                   </td>
-                  <td className="num">{usd(o.total)}</td>
+                  {showTotals && <td className="num">{usd(o.total ?? 0)}</td>}
                 </tr>
               ))}
             </tbody>
@@ -180,7 +183,7 @@ export function OrdersTable({
                     <span className={isDueToday(o.due) && (o.status === 'New' || o.status === 'Roasting') ? 'due-soon' : ''}>
                       Due {dueLabel(o.due).toLowerCase()}
                     </span>
-                    <span className="num">{usd(o.total)}</span>
+                    {showTotals && <span className="num">{usd(o.total ?? 0)}</span>}
                   </span>
                 </button>
               </li>

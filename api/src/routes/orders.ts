@@ -2,21 +2,25 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { COFFEE_IDS, GRINDS, ORDER_STATUSES, TODAY, nextStatus, round2, type Order } from '../domain.js';
 import { coffees } from '../seed.js';
-import { ApiError, notFound, parse, requireRole } from '../http.js';
+import { ApiError, financials, financialsForbidden, notFound, parse, requireRole } from '../http.js';
 import type { Store, Tx } from '../store/index.js';
 import { eventFor } from '../events.js';
 
 const priceOf = (id: string) => coffees.find((c) => c.id === id)!.pricePerKg;
 const nameOf = (id: string) => coffees.find((c) => c.id === id)!.name;
 
-/** Shape returned to clients: names, line totals, totals and the allowed next status. */
-export function presentOrder(o: Order) {
+/**
+ * Shape returned to clients: names, totals and the allowed next status.
+ * `lineTotal` and `total` are left out entirely (not nulled) for roles that
+ * don't see financials.
+ */
+export function presentOrder(o: Order, { financials = true } = {}) {
   const lines = o.lines.map((l) => ({
     coffeeId: l.coffeeId,
     coffee: nameOf(l.coffeeId),
     kg: l.kg,
     grind: l.grind,
-    lineTotal: round2(l.kg * priceOf(l.coffeeId)),
+    ...(financials && { lineTotal: round2(l.kg * priceOf(l.coffeeId)) }),
   }));
   return {
     id: o.id,
@@ -26,10 +30,16 @@ export function presentOrder(o: Order) {
     due: o.due,
     status: o.status,
     totalKg: lines.reduce((s, l) => s + l.kg, 0),
-    total: round2(lines.reduce((s, l) => s + l.lineTotal, 0)),
+    ...(financials && { total: round2(o.lines.reduce((s, l) => s + l.kg * priceOf(l.coffeeId), 0)) }),
     ...(o.note && { note: o.note }),
     nextStatus: nextStatus(o.status),
   };
+}
+
+/** Removes the financial fields from an already presented order. */
+function withoutFinancials(o: ReturnType<typeof presentOrder>) {
+  const { total: _total, ...rest } = o;
+  return { ...rest, lines: rest.lines.map(({ lineTotal: _lineTotal, ...l }) => l) };
 }
 
 const isoDate = z.iso.date('Use a date like 2026-11-09');
@@ -77,7 +87,9 @@ export function ordersRouter(store: Store) {
   const r = Router();
   r.get('/', async (req, res) => {
     const q = parse(listQuery, req.query);
-    let rows = (await store.read((t) => t.listOrders())).map(presentOrder);
+    // Sorting by value would rank orders by price even with the totals hidden.
+    if (q.sort.endsWith('total') && !financials(req)) throw financialsForbidden('sort orders by total');
+    let rows = (await store.read((t) => t.listOrders())).map((o) => presentOrder(o)); // full, for sorting
 
     if (q.status) rows = rows.filter((o) => q.status!.includes(o.status));
     if (q.dueFrom) rows = rows.filter((o) => o.due >= q.dueFrom!);
@@ -89,16 +101,18 @@ export function ordersRouter(store: Store) {
 
     const key = q.sort.replace('-', '') as 'due' | 'total';
     const dir = q.sort.startsWith('-') ? -1 : 1;
-    rows.sort((a, b) => (a[key] < b[key] ? -1 : a[key] > b[key] ? 1 : a.id.localeCompare(b.id)) * dir);
+    rows.sort((a, b) => (a[key]! < b[key]! ? -1 : a[key]! > b[key]! ? 1 : a.id.localeCompare(b.id)) * dir); // rows are fully presented here
 
     const start = (q.page - 1) * q.pageSize;
-    res.json({ data: rows.slice(start, start + q.pageSize), page: q.page, pageSize: q.pageSize, total: rows.length });
+    const fin = financials(req);
+    const page = rows.slice(start, start + q.pageSize).map((o) => (fin ? o : withoutFinancials(o)));
+    res.json({ data: page, page: q.page, pageSize: q.pageSize, total: rows.length });
   });
 
   r.get('/:id', async (req, res) => {
     const order = await store.read((t) => t.getOrder(req.params.id));
     if (!order) throw notFound(`Order ${req.params.id}`);
-    res.json(presentOrder(order));
+    res.json(presentOrder(order, { financials: financials(req) }));
   });
 
   r.post('/', requireRole('admin'), async (req, res) => {
@@ -108,7 +122,7 @@ export function ordersRouter(store: Store) {
       await t.emit(eventFor(req, 'order.created', order.id, `created ${order.id} for ${order.customer}`));
       return order;
     });
-    res.status(201).location(`/api/v1/orders/${order.id}`).json(presentOrder(order));
+    res.status(201).location(`/api/v1/orders/${order.id}`).json(presentOrder(order, { financials: financials(req) }));
   });
 
   /** Loads an order with its row locked, so concurrent edits are applied one after the other. */
@@ -130,7 +144,7 @@ export function ordersRouter(store: Store) {
       await t.emit(eventFor(req, 'order.updated', order.id, `edited ${order.id} (${order.customer})`));
       return order;
     });
-    res.json(presentOrder(order));
+    res.json(presentOrder(order, { financials: financials(req) }));
   });
 
   r.post('/:id/status', requireRole('admin', 'production'), async (req, res) => {
@@ -150,7 +164,7 @@ export function ordersRouter(store: Store) {
       await t.emit(eventFor(req, 'order.updated', order.id, `moved ${order.id} to ${status}`));
       return order;
     });
-    res.json(presentOrder(order));
+    res.json(presentOrder(order, { financials: financials(req) }));
   });
 
   return r;
