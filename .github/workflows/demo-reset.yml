@@ -1,0 +1,36 @@
+# Resets the public demo database to the seed data every night, so visitors
+# always start from a clean state. Needs the repository secret DEMO_DATABASE_URL
+# (Settings > Secrets and variables > Actions), the same value as DATABASE_URL on Render.
+name: Reset demo data
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 00:00 UTC daily
+  workflow_dispatch: # "Run workflow" button for a manual reset
+
+concurrency: demo-reset
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - run: npm ci
+      - name: Reset database
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DEMO_DATABASE_URL secret is not set; nothing to reset."
+            exit 0
+          fi
+          npm run db:reset
+        env:
+          DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}

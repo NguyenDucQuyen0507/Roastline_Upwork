@@ -1,5 +1,7 @@
 # Roastline
 
+[![CI](https://github.com/NguyenDucQuyen0507/Roastline_Upwork/actions/workflows/ci.yml/badge.svg)](https://github.com/NguyenDucQuyen0507/Roastline_Upwork/actions/workflows/ci.yml)
+
 A full-stack operations tool for a small wholesale coffee roaster: orders, the daily roast schedule, green coffee inventory, customers and shipping reports.
 
 - **[`api/`](api)**: REST API in Node.js, Express 5, TypeScript and PostgreSQL, documented with OpenAPI 3 and Swagger UI.
@@ -17,7 +19,7 @@ A full-stack operations tool for a small wholesale coffee roaster: orders, the d
 - **Safe under concurrent use.** Writes run in PostgreSQL transactions with row locks and a per-roaster advisory lock. Tests fire parallel requests to prove a slot can't be double-booked and stock updates aren't lost.
 - **Design-first API.** The OpenAPI spec was written before the code and is served as interactive docs at `/docs`.
 - **One error shape everywhere** (`{ error: { code, message, details } }`), which the dashboard shows to the user.
-- **Tested.** 28 API tests run against both the PostgreSQL and the in-memory store.
+- **Tested.** 28 API tests run against both the PostgreSQL and the in-memory store. CI on every push: typecheck, tests on a PostgreSQL service container, lint, builds and the Docker image.
 - **Polished UI.** Light and dark themes, mobile layouts, keyboard and screen-reader support.
 
 ![409 conflict in Swagger UI](api/screenshots/2-batch-conflict-409.png)
@@ -61,6 +63,8 @@ Tests: `npm test` (in-memory) or `npm run test:pg` (in-memory and PostgreSQL) in
 - **API:** [Render Blueprint](render.yaml) (New > Blueprint, pick this repository). Set `DATABASE_URL` (e.g. a free [Neon](https://neon.tech) database) and `CORS_ORIGIN` (the dashboard URL).
 - **Dashboard:** [Netlify](netlify.toml) (Import from Git, pick this repository). Set `VITE_API_URL` to `https://<api>.onrender.com/api/v1`.
 
+The demo database is reset to the seed data every night by a [GitHub Actions workflow](.github/workflows/demo-reset.yml) (needs the repository secret `DEMO_DATABASE_URL`). It can also be run by hand from the Actions tab.
+
 Details: [api/README.md](api/README.md#deploy-free-on-render) and [dashboard/README.md](dashboard/README.md#deploy-free-on-netlify).
 
 ## Repository layout
@@ -69,6 +73,7 @@ Details: [api/README.md](api/README.md#deploy-free-on-render) and [dashboard/REA
 api/             REST API (see api/README.md)
 dashboard/       React dashboard (see dashboard/README.md)
 docs/            Screenshots for this README
+.github/         CI and nightly demo reset workflows
 render.yaml      Render Blueprint for the API
 netlify.toml     Netlify build for the dashboard
 ```
