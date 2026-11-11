@@ -1,0 +1,8 @@
+# Netlify: Add new site > Import from Git > pick this repository.
+# Set VITE_API_URL (and VITE_API_KEY) under Site configuration > Environment variables.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "24"

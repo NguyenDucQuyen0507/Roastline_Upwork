@@ -40,6 +40,15 @@ Environment variables (see `.env.example`):
 | `VITE_API_KEY` | `demo-key` | Sent as `X-API-Key` on writes. It ends up in the browser bundle, so use a demo key only |
 | `API_PROXY_TARGET` | `http://localhost:3000` | Where the dev server proxies `/api` |
 
+## Deploy (free) on Netlify
+
+The repository includes a [`netlify.toml`](netlify.toml).
+
+1. Deploy the API first and note its URL.
+2. On [netlify.com](https://netlify.com): **Add new site > Import an existing project**, pick this repository.
+3. Under **Environment variables** set `VITE_API_URL` to `https://<your-api>.onrender.com/api/v1` (and `VITE_API_KEY` if the API doesn't use `demo-key`), then deploy.
+4. Set `CORS_ORIGIN` on the API to the Netlify URL.
+
 ## Structure
 ```
 src/
