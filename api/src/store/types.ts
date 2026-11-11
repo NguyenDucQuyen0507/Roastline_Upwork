@@ -1,4 +1,4 @@
-import type { Batch, CoffeeId, Order, Roaster, StockRecord } from '../domain.js';
+import type { Batch, CoffeeId, Order, RefreshTokenRecord, Roaster, StockRecord, User } from '../domain.js';
 
 /**
  * Data access used by the routes. Every call runs inside a unit of work:
@@ -25,6 +25,15 @@ export interface Tx {
   listStock(): Promise<StockRecord[]>;
   getStock(coffeeId: CoffeeId, opts?: { lock?: boolean }): Promise<StockRecord | undefined>;
   setStockKg(coffeeId: CoffeeId, kg: number): Promise<void>;
+
+  findUserByEmail(email: string): Promise<User | undefined>;
+  getUser(id: string): Promise<User | undefined>;
+
+  insertRefreshToken(t: Omit<RefreshTokenRecord, 'id' | 'revokedAt'>): Promise<void>;
+  /** `lock: true` stops two refreshes with the same token from both succeeding. */
+  findRefreshToken(tokenHash: string, opts?: { lock?: boolean }): Promise<RefreshTokenRecord | undefined>;
+  revokeRefreshToken(id: string): Promise<void>;
+  revokeTokenFamily(familyId: string): Promise<void>;
 }
 
 export interface Store {

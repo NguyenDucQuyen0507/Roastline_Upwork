@@ -1,6 +1,6 @@
 import pg from 'pg';
-import type { Batch, CoffeeId, Order, StockRecord } from '../domain.js';
-import { coffees, seedBatches, seedOrders, seedStock } from '../seed.js';
+import type { Batch, CoffeeId, Order, RefreshTokenRecord, StockRecord, User } from '../domain.js';
+import { coffees, seedBatches, seedOrders, seedStock, seedUsers } from '../seed.js';
 import { migrate } from '../db/migrate.js';
 import type { Store, Tx } from './types.js';
 
@@ -25,6 +25,18 @@ const BATCH_SELECT = `
 interface OrderRow { id: string; customer: string; city: string; due: string; status: Order['status']; note: string | null; lines: Order['lines'] }
 interface BatchRow { id: string; coffee_id: CoffeeId; roaster: Batch['roaster']; start_min: number; duration_min: number; kg: number; roast_level: Batch['roastLevel']; green_use: Batch['greenUse'] }
 interface StockRow { coffee_id: CoffeeId; kg: number; reorder_at: number; capacity: number }
+interface UserRow { id: string; email: string; name: string; role: User['role']; password_hash: string }
+interface TokenRow { id: string; user_id: string; family_id: string; token_hash: string; expires_at: Date; revoked_at: Date | null }
+
+const toUser = (r: UserRow): User => ({ id: r.id, email: r.email, name: r.name, role: r.role, passwordHash: r.password_hash });
+const toToken = (r: TokenRow): RefreshTokenRecord => ({
+  id: r.id,
+  userId: r.user_id,
+  familyId: r.family_id,
+  tokenHash: r.token_hash,
+  expiresAt: r.expires_at,
+  revokedAt: r.revoked_at,
+});
 
 const toOrder = (r: OrderRow): Order => ({
   id: r.id,
@@ -132,6 +144,34 @@ function api(db: Queryable): Tx {
     async setStockKg(coffeeId, kg) {
       await db.query('UPDATE green_stock SET kg = $2 WHERE coffee_id = $1', [coffeeId, kg]);
     },
+
+    async findUserByEmail(email) {
+      const { rows } = await db.query<UserRow>('SELECT * FROM users WHERE lower(email) = lower($1)', [email]);
+      return rows[0] && toUser(rows[0]);
+    },
+    async getUser(id) {
+      const { rows } = await db.query<UserRow>('SELECT * FROM users WHERE id = $1', [id]);
+      return rows[0] && toUser(rows[0]);
+    },
+
+    async insertRefreshToken(t) {
+      await db.query('INSERT INTO refresh_tokens (user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)', [
+        t.userId, t.familyId, t.tokenHash, t.expiresAt,
+      ]);
+    },
+    async findRefreshToken(hash, opts) {
+      const { rows } = await db.query<TokenRow>(
+        `SELECT * FROM refresh_tokens WHERE token_hash = $1${opts?.lock ? ' FOR UPDATE' : ''}`,
+        [hash],
+      );
+      return rows[0] && toToken(rows[0]);
+    },
+    async revokeRefreshToken(id) {
+      await db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [id]);
+    },
+    async revokeTokenFamily(familyId) {
+      await db.query('UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL', [familyId]);
+    },
   };
 }
 
@@ -144,8 +184,19 @@ export class PgStore implements Store {
     const store = new PgStore(pool);
     await migrate(pool);
     if (seedIfEmpty) {
-      const { rows } = await pool.query<{ n: number }>('SELECT count(*)::int AS n FROM coffees');
-      if (rows[0].n === 0) await store.reset();
+      const { rows } = await pool.query<{ coffees: number; users: number }>(
+        'SELECT (SELECT count(*) FROM coffees)::int AS coffees, (SELECT count(*) FROM users)::int AS users',
+      );
+      if (rows[0].coffees === 0) await store.reset();
+      // A database created before sign-in existed: add the demo accounts, keep the data.
+      else if (rows[0].users === 0) {
+        for (const u of await seedUsers()) {
+          await pool.query(
+            'INSERT INTO users (id, email, name, role, password_hash) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING',
+            [u.id, u.email, u.name, u.role, u.passwordHash],
+          );
+        }
+      }
     }
     return store;
   }
@@ -173,7 +224,15 @@ export class PgStore implements Store {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('TRUNCATE batch_green_use, batches, order_lines, orders, green_stock, coffees');
+      const users = await seedUsers();
+      await client.query(
+        'TRUNCATE refresh_tokens, users, batch_green_use, batches, order_lines, orders, green_stock, coffees',
+      );
+      for (const u of users) {
+        await client.query('INSERT INTO users (id, email, name, role, password_hash) VALUES ($1, $2, $3, $4, $5)', [
+          u.id, u.email, u.name, u.role, u.passwordHash,
+        ]);
+      }
       for (const c of coffees) {
         await client.query('INSERT INTO coffees (id, name, origin, price_per_kg, is_blend) VALUES ($1, $2, $3, $4, $5)', [
           c.id, c.name, c.origin, c.pricePerKg, c.isBlend,

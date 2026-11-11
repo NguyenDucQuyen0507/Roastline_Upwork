@@ -19,8 +19,8 @@ REST API behind the [Roastline dashboard](../dashboard): an operations tool for 
 - **Filtering, search, sorting and pagination** on `GET /orders`.
 - **PostgreSQL with safe concurrency.** Every write runs in a transaction. Order and stock rows are locked with `SELECT ... FOR UPDATE`, and each roaster's schedule with a transaction-scoped advisory lock, so two people can't book the same slot, spend the same green coffee or move an order twice. Tests fire parallel requests to prove it.
 - **Two interchangeable stores** behind one interface: PostgreSQL when `DATABASE_URL` is set, in-memory otherwise (zero-setup demo). Plain SQL migrations run automatically on start, and an empty database is seeded with demo data.
-- **API key** on write operations (`X-API-Key`, demo key `demo-key`). Reads are public.
-- **28 automated tests**, run against both stores (56 runs), covering the happy paths, every error code and concurrent requests.
+- **JWT sign-in with roles.** 15-minute access tokens (HS256) and single-use refresh tokens stored as SHA-256 hashes. Refresh tokens rotate on every use; replaying an old one revokes every token from that sign-in. Passwords are hashed with scrypt, and unknown emails take as long to reject as wrong passwords. Three roles: `admin` (everything), `production` (move orders, schedule and cancel batches, record deliveries), `viewer` (read only), enforced per route with `403 FORBIDDEN`.
+- **35 automated tests**, run against both stores (70 runs), covering the happy paths, every error code, roles, token rotation and concurrent requests.
 
 ![409 conflict in Swagger UI](screenshots/2-batch-conflict-409.png)
 
@@ -56,25 +56,32 @@ Environment variables (see `.env.example`):
 |---|---|---|
 | `PORT` | `3000` | Port to listen on |
 | `DATABASE_URL` | (unset) | PostgreSQL connection string. Unset = in-memory store |
-| `API_KEY` | `demo-key` | Key required in `X-API-Key` for write operations |
+| `JWT_SECRET` | dev-only fallback | Secret for signing access tokens. **Required** when `NODE_ENV=production` |
 | `CORS_ORIGIN` | (any) | Comma-separated list of origins allowed to call the API |
 | `TEST_DATABASE_URL` | (unset) | Also run the tests against this PostgreSQL database |
 
 ## Try it
 
+Demo accounts (password `roastline-demo` for all): `admin@roastline.dev`, `production@roastline.dev`, `viewer@roastline.dev`.
+
 ```bash
+# Sign in and keep the access token
+TOKEN=$(curl -s -X POST localhost:3000/api/v1/auth/login -H "Content-Type: application/json" \
+  -d '{"email":"admin@roastline.dev","password":"roastline-demo"}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).accessToken')
+
 # Orders due on Nov 6 that are still New, highest value first
-curl "localhost:3000/api/v1/orders?status=New&dueFrom=2026-11-06&dueTo=2026-11-06&sort=-total"
+curl -H "Authorization: Bearer $TOKEN" \
+  "localhost:3000/api/v1/orders?status=New&dueFrom=2026-11-06&dueTo=2026-11-06&sort=-total"
 
 # Create an order (the server calculates the total)
 curl -X POST localhost:3000/api/v1/orders \
-  -H "Content-Type: application/json" -H "X-API-Key: demo-key" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{"customer":"Copperline Studio Café","city":"Seattle","due":"2026-11-09",
        "lines":[{"coffeeId":"nyeri","kg":5,"grind":"Filter"}]}'
 
 # Try to skip a status step -> 409
 curl -X POST localhost:3000/api/v1/orders/WH-2421/status \
-  -H "Content-Type: application/json" -H "X-API-Key: demo-key" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{"status":"Shipped"}'
 ```
 
@@ -82,6 +89,10 @@ curl -X POST localhost:3000/api/v1/orders/WH-2421/status \
 
 | Method | Path | Purpose |
 |---|---|---|
+| POST | `/api/v1/auth/login` | Sign in: access token, refresh token and user |
+| POST | `/api/v1/auth/refresh` | Rotate the refresh token for a new pair |
+| POST | `/api/v1/auth/logout` | Revoke the session |
+| GET | `/api/v1/auth/me` | The signed-in user |
 | GET | `/api/v1/orders` | List with `status`, `dueFrom`, `dueTo`, `q`, `sort`, `page`, `pageSize` |
 | POST | `/api/v1/orders` | Create an order |
 | GET | `/api/v1/orders/{id}` | One order |
@@ -112,8 +123,9 @@ src/
     postgres.ts       PostgreSQL implementation (transactions, row locks)
     memory.ts         In-memory implementation (serialised transactions with rollback)
   db/                 Migration runner and reset script
-  http.ts             ApiError, validation helper, API key check, error handler
-  routes/             One router per resource
+  auth.ts             Password hashing, JWT and refresh token helpers
+  http.ts             ApiError, validation helper, authenticate / requireRole, error handler
+  routes/             One router per resource (auth.ts: sign-in, refresh, sign-out)
   app.ts              Express app (createApp is used by tests and the server)
   server.ts           Picks the store, starts the server, shuts down cleanly
 tests/api.test.ts     Vitest + Supertest, run against each store
@@ -131,4 +143,4 @@ The repository root includes a [Render Blueprint](../render.yaml) that deploys t
 4. Set `CORS_ORIGIN` to the dashboard's URL (e.g. `https://roastline-dashboard.netlify.app`), or leave it empty to allow any origin.
 5. When the deploy finishes, the docs are at `https://<service>.onrender.com/docs`.
 
-`API_KEY` is set to `demo-key` on purpose so visitors can try write operations in Swagger UI. Free Render services sleep when idle, so the first request can take 30–50 seconds.
+Render generates `JWT_SECRET` on the first deploy. Visitors try the API in Swagger UI with the demo accounts listed on the docs page. Free Render services sleep when idle, so the first request can take 30–50 seconds.

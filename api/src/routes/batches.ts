@@ -12,7 +12,7 @@ import {
   type Batch,
 } from '../domain.js';
 import { coffees } from '../seed.js';
-import { ApiError, notFound, parse } from '../http.js';
+import { ApiError, notFound, parse, requireRole } from '../http.js';
 import type { Store } from '../store/index.js';
 
 const nameOf = (id: string) => coffees.find((c) => c.id === id)!.name;
@@ -59,7 +59,7 @@ export function batchesRouter(store: Store) {
     res.json({ data: rows });
   });
 
-  r.post('/', async (req, res) => {
+  r.post('/', requireRole('admin', 'production'), async (req, res) => {
     const body = parse(newBatch, req.body);
     const startMin = fromHHMM(body.start);
 
@@ -119,10 +119,10 @@ export function batchesRouter(store: Store) {
     res.status(201).location(`/api/v1/batches/${batch.id}`).json(presentBatch(batch));
   });
 
-  r.delete('/:id', async (req, res) => {
+  r.delete('/:id', requireRole('admin', 'production'), async (req, res) => {
     // Cancelling puts the green coffee back (never beyond storage capacity).
     await store.tx(async (t) => {
-      const batch = await t.deleteBatch(req.params.id);
+      const batch = await t.deleteBatch(String(req.params.id));
       if (!batch) throw notFound(`Batch ${req.params.id}`);
       for (const g of batch.greenUse) {
         const s = (await t.getStock(g.coffeeId, { lock: true }))!;

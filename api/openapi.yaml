@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
   title: Roastline API
-  version: 1.0.0
+  version: 1.1.0
   license:
     name: MIT
+    url: https://opensource.org/licenses/MIT
   description: |
     REST API behind the Roastline dashboard, an operations tool for a small
     wholesale coffee roaster: orders, roast batches, green coffee inventory,
@@ -15,13 +16,27 @@ info:
     - A roast batch is rejected if it overlaps another batch on the same roaster,
       exceeds the roaster's capacity, or needs more green coffee than is in stock.
     - Every error uses the same shape: `{ "error": { "code", "message", "details" } }`.
-    - Write operations need the `X-API-Key` header. The demo key is `demo-key`.
+    - Every endpoint except the health check and `/auth/*` needs a JWT access token
+      (`Authorization: Bearer ...`). Writes also check the user's role.
 
-    This demo keeps data in memory and resets when the server restarts.
+    **Try it:** call `POST /auth/login` with one of the demo accounts below, copy the
+    `accessToken` and paste it into **Authorize**. Access tokens last 15 minutes;
+    `POST /auth/refresh` swaps the refresh token for a new pair.
+
+    | Email | Role | Can |
+    |---|---|---|
+    | `admin@roastline.dev` | admin | everything |
+    | `production@roastline.dev` | production | move orders, schedule and cancel batches, record deliveries |
+    | `viewer@roastline.dev` | viewer | read only |
+
+    The password for all three is `roastline-demo`. The demo data is reset every night.
 servers:
   - url: /api/v1
-security: []
+security:
+  - BearerAuth: []
 tags:
+  - name: Auth
+    description: Sign in, refresh and sign out.
   - name: Orders
     description: Wholesale orders and their production status.
   - name: Batches
@@ -39,10 +54,11 @@ tags:
 
 components:
   securitySchemes:
-    ApiKey:
-      type: apiKey
-      in: header
-      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from `POST /auth/login` or `POST /auth/refresh`.
 
   parameters:
     OrderId:
@@ -75,12 +91,22 @@ components:
                 - path: lines.0.kg
                   message: 'Too small: expected number to be >=0.5'
     Unauthorized:
-      description: Missing or wrong `X-API-Key` header.
+      description: No access token, or it is invalid or expired (`details.reason` says which).
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
           example:
-            error: { code: UNAUTHORIZED, message: A valid X-API-Key header is required }
+            error: { code: UNAUTHORIZED, message: Access token expired, details: { reason: expired } }
+    Forbidden:
+      description: Signed in, but the user's role can't do this.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: FORBIDDEN
+              message: 'This action needs one of these roles: admin, production'
+              details: { requiredRoles: [admin, production], role: viewer }
     NotFound:
       description: The resource does not exist.
       content:
@@ -100,13 +126,51 @@ components:
           properties:
             code:
               type: string
-              enum: [VALIDATION_ERROR, UNAUTHORIZED, NOT_FOUND, INVALID_TRANSITION, ORDER_LOCKED, SCHEDULE_CONFLICT, ROASTER_CAPACITY_EXCEEDED, INSUFFICIENT_GREEN_STOCK, STORAGE_CAPACITY_EXCEEDED, INTERNAL_ERROR]
+              enum: [VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, INVALID_TRANSITION, ORDER_LOCKED, SCHEDULE_CONFLICT, ROASTER_CAPACITY_EXCEEDED, INSUFFICIENT_GREEN_STOCK, STORAGE_CAPACITY_EXCEEDED, INTERNAL_ERROR]
             message: { type: string }
             details: {}
 
     CoffeeId:
       type: string
       enum: [guji, huila, nyeri, cerrado, huehue, house, decaf]
+
+    Role:
+      type: string
+      enum: [admin, production, viewer]
+
+    User:
+      type: object
+      required: [id, email, name, role]
+      properties:
+        id: { type: string, example: u-2 }
+        email: { type: string, format: email, example: production@roastline.dev }
+        name: { type: string, example: Mara Okafor }
+        role: { $ref: '#/components/schemas/Role' }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: production@roastline.dev }
+        password: { type: string, format: password, example: roastline-demo }
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, description: The refresh token from the last sign-in or refresh. }
+
+    Session:
+      type: object
+      required: [accessToken, refreshToken, tokenType, expiresIn, user]
+      properties:
+        accessToken: { type: string, description: JWT for the Authorization header. }
+        refreshToken:
+          type: string
+          description: Opaque token for `POST /auth/refresh`. Single use; valid for 7 days.
+        tokenType: { type: string, enum: [Bearer] }
+        expiresIn: { type: integer, description: Access token lifetime in seconds., example: 900 }
+        user: { $ref: '#/components/schemas/User' }
 
     Coffee:
       type: object
@@ -285,12 +349,96 @@ paths:
       operationId: getHealth
       tags: [System]
       summary: Health check
+      security: []
       responses:
         '200':
           description: The API is running.
           content:
             application/json:
               example: { status: ok }
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: Sign in with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Wrong email or password.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: { code: UNAUTHORIZED, message: Wrong email or password }
+
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [Auth]
+      summary: Swap a refresh token for a new access and refresh token
+      description: |
+        Refresh tokens rotate: each one works once. Sending a token that was
+        already used ends every session from that sign-in, in case it leaked.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: A new token pair.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: The refresh token is unknown, expired, revoked or already used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: { code: UNAUTHORIZED, message: 'Session expired, please sign in again' }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [Auth]
+      summary: Sign out (revokes the refresh token and every token from the same sign-in)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '204': { description: Signed out. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Auth]
+      summary: The signed-in user
+      responses:
+        '200':
+          description: The user from the access token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /coffees:
     get:
@@ -308,6 +456,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/Coffee' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /orders:
     get:
@@ -345,11 +494,12 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OrderPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       operationId: createOrder
       tags: [Orders]
-      summary: Create an order (total is calculated by the server)
-      security: [{ ApiKey: [] }]
+      summary: Create an order (total is calculated by the server) (admin)
+      x-roles: [admin]
       requestBody:
         required: true
         content:
@@ -366,6 +516,7 @@ paths:
               schema: { $ref: '#/components/schemas/Order' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /orders/{id}:
     parameters:
@@ -380,12 +531,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
       operationId: updateOrder
       tags: [Orders]
-      summary: Edit the due date or note of a New order
-      security: [{ ApiKey: [] }]
+      summary: Edit the due date or note of a New order (admin)
+      x-roles: [admin]
       requestBody:
         required: true
         content:
@@ -399,6 +551,7 @@ paths:
               schema: { $ref: '#/components/schemas/Order' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: The order is already in production and can no longer be edited.
@@ -414,8 +567,8 @@ paths:
     post:
       operationId: changeOrderStatus
       tags: [Orders]
-      summary: Move an order to its next status
-      security: [{ ApiKey: [] }]
+      summary: Move an order to its next status (admin or production)
+      x-roles: [admin, production]
       requestBody:
         required: true
         content:
@@ -429,6 +582,7 @@ paths:
               schema: { $ref: '#/components/schemas/Order' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: The requested status is not the next step.
@@ -461,11 +615,12 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/Batch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       operationId: createBatch
       tags: [Batches]
-      summary: Schedule a roast batch (checks overlap, capacity and green stock)
-      security: [{ ApiKey: [] }]
+      summary: Schedule a roast batch (checks overlap, capacity and green stock) (admin or production)
+      x-roles: [admin, production]
       requestBody:
         required: true
         content:
@@ -479,6 +634,7 @@ paths:
               schema: { $ref: '#/components/schemas/Batch' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409':
           description: Overlaps another batch on the same roaster, or not enough green coffee.
           content:
@@ -511,11 +667,12 @@ paths:
     delete:
       operationId: cancelBatch
       tags: [Batches]
-      summary: Cancel a batch and return its green coffee to stock
-      security: [{ ApiKey: [] }]
+      summary: Cancel a batch and return its green coffee to stock (admin or production)
+      x-roles: [admin, production]
       responses:
         '204': { description: Cancelled. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /inventory:
@@ -539,6 +696,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/StockItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /inventory/{coffeeId}/receipts:
     parameters:
@@ -546,8 +704,8 @@ paths:
     post:
       operationId: recordReceipt
       tags: [Inventory]
-      summary: Record a delivery of green coffee
-      security: [{ ApiKey: [] }]
+      summary: Record a delivery of green coffee (admin or production)
+      x-roles: [admin, production]
       requestBody:
         required: true
         content:
@@ -561,6 +719,7 @@ paths:
               schema: { $ref: '#/components/schemas/StockItem' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422':
           description: The delivery would exceed storage capacity.
@@ -593,6 +752,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/Customer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /reports/shipped-by-week:
     get:
@@ -610,3 +770,4 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/WeeklyShipped' }
+        '401': { $ref: '#/components/responses/Unauthorized' }

@@ -1,22 +1,27 @@
-import type { Batch, Order, StockRecord } from '../domain.js';
-import { seedBatches, seedOrders, seedStock } from '../seed.js';
+import { randomUUID } from 'node:crypto';
+import type { Batch, Order, RefreshTokenRecord, StockRecord, User } from '../domain.js';
+import { seedBatches, seedOrders, seedStock, seedUsers } from '../seed.js';
 import type { Store, Tx } from './types.js';
 
 interface State {
   orders: Order[];
   batches: Batch[];
   stock: StockRecord[];
+  users: User[];
+  refreshTokens: RefreshTokenRecord[];
   nextOrderNo: number;
   nextBatchNo: number;
 }
 
-const seedState = (): State => {
+const seedState = async (): Promise<State> => {
   const orders = seedOrders();
   const batches = seedBatches();
   return {
     orders,
     batches,
     stock: seedStock(),
+    users: await seedUsers(),
+    refreshTokens: [],
     nextOrderNo: Math.max(...orders.map((o) => Number(o.id.slice(3)))) + 1,
     nextBatchNo: Math.max(...batches.map((b) => Number(b.id.slice(2)))) + 1,
   };
@@ -29,8 +34,15 @@ const clone = <T>(v: T): T => structuredClone(v);
  * Transactions run one at a time; a failed one restores the state it started from.
  */
 export class MemoryStore implements Store {
-  private state = seedState();
-  private queue: Promise<unknown> = Promise.resolve();
+  private state!: State;
+  private queue: Promise<unknown>;
+
+  constructor() {
+    // Seeding hashes passwords (async); every call waits for it through the queue.
+    this.queue = seedState().then((s) => {
+      this.state = s;
+    });
+  }
 
   private api(): Tx {
     const s = this.state;
@@ -66,10 +78,26 @@ export class MemoryStore implements Store {
       setStockKg: async (coffeeId, kg) => {
         s.stock.find((x) => x.coffeeId === coffeeId)!.kg = kg;
       },
+
+      findUserByEmail: async (email) => clone(s.users.find((u) => u.email.toLowerCase() === email.toLowerCase())),
+      getUser: async (id) => clone(s.users.find((u) => u.id === id)),
+
+      insertRefreshToken: async (t) => {
+        s.refreshTokens.push({ ...t, id: randomUUID(), revokedAt: null });
+      },
+      findRefreshToken: async (hash) => clone(s.refreshTokens.find((t) => t.tokenHash === hash)),
+      revokeRefreshToken: async (id) => {
+        const t = s.refreshTokens.find((x) => x.id === id);
+        if (t && !t.revokedAt) t.revokedAt = new Date();
+      },
+      revokeTokenFamily: async (familyId) => {
+        for (const t of s.refreshTokens) if (t.familyId === familyId && !t.revokedAt) t.revokedAt = new Date();
+      },
     };
   }
 
   async read<T>(fn: (t: Tx) => Promise<T>): Promise<T> {
+    await this.queue;
     return fn(this.api());
   }
 
@@ -89,8 +117,9 @@ export class MemoryStore implements Store {
   }
 
   async reset() {
+    const fresh = await seedState();
     await this.tx(async () => {
-      this.state = seedState();
+      this.state = fresh;
     });
   }
 

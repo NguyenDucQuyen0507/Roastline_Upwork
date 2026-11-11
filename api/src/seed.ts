@@ -1,5 +1,6 @@
-import type { Batch, Coffee, Order, StockRecord } from './domain.js';
+import type { Batch, Coffee, Order, StockRecord, User } from './domain.js';
 import { greenNeeded } from './domain.js';
+import { hashPassword } from './auth.js';
 
 export const coffees: Coffee[] = [
   { id: 'guji', name: 'Ethiopia Guji Natural', origin: 'Ethiopia', pricePerKg: 34, isBlend: false },
@@ -81,3 +82,19 @@ export const shippedByWeek = [
   { week: 'Oct 29', Brazil: 151, Colombia: 78, Ethiopia: 40, Guatemala: 35, Kenya: 22 },
   { week: 'Nov 5', Brazil: 96, Colombia: 51, Ethiopia: 22, Guatemala: 20, Kenya: 13 },
 ];
+
+/** Public demo accounts, shown on the dashboard's sign-in screen and in the API docs. */
+export const DEMO_PASSWORD = 'roastline-demo';
+export const demoUsers: Omit<User, 'passwordHash'>[] = [
+  { id: 'u-1', email: 'admin@roastline.dev', name: 'Sam Rivera', role: 'admin' },
+  { id: 'u-2', email: 'production@roastline.dev', name: 'Mara Okafor', role: 'production' },
+  { id: 'u-3', email: 'viewer@roastline.dev', name: 'Jo Chen', role: 'viewer' },
+];
+
+// Hashing is deliberately slow, so hash the demo password once per process.
+let hashed: Promise<string[]> | undefined;
+export async function seedUsers(): Promise<User[]> {
+  hashed ??= Promise.all(demoUsers.map(() => hashPassword(DEMO_PASSWORD)));
+  const hashes = await hashed;
+  return demoUsers.map((u, i) => ({ ...u, passwordHash: hashes[i] }));
+}

@@ -1,11 +1,33 @@
 /**
  * Client for the Roastline API. Responses are mapped onto the dashboard's own
  * types in data.ts, so components don't need to know the API's shapes.
+ *
+ * Sessions: the short-lived access token lives only in memory; the refresh
+ * token is kept in localStorage so a reload stays signed in. A 401 triggers one
+ * refresh and a retry. Refreshes are single-flight and, through the Web Locks
+ * API, one tab at a time: the API rotates refresh tokens and treats a reused
+ * one as stolen, so two tabs refreshing with the same token would sign out both.
  */
 import type { Batch, GreenStock, Order, OrderStatus, ShippedWeek } from './data';
 
 const BASE = (import.meta.env.VITE_API_URL ?? '/api/v1').replace(/\/$/, '');
-const KEY = import.meta.env.VITE_API_KEY ?? 'demo-key';
+const REFRESH_KEY = 'roastline-refresh-token';
+
+export type Role = 'admin' | 'production' | 'viewer';
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+}
+
+/** What each role may do, mirroring the API's checks so the UI can hide what would fail. */
+export const can = {
+  advanceOrder: (u: User | null) => u?.role === 'admin' || u?.role === 'production',
+  editOrders: (u: User | null) => u?.role === 'admin',
+  manageBatches: (u: User | null) => u?.role === 'admin' || u?.role === 'production',
+  receiveStock: (u: User | null) => u?.role === 'admin' || u?.role === 'production',
+};
 
 /** Error in the API's standard shape: { error: { code, message, details } }. */
 export class ApiError extends Error {
@@ -19,22 +41,63 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const write = init.method && init.method !== 'GET';
-  let res: Response;
+/* ---------- session ---------- */
+
+let accessToken: string | null = null;
+let currentUser: User | null = null;
+let refreshing: Promise<User> | null = null;
+const listeners = new Set<(u: User | null) => void>();
+
+const readRefresh = () => {
   try {
-    res = await fetch(`${BASE}${path}`, {
+    return localStorage.getItem(REFRESH_KEY);
+  } catch {
+    return null;
+  }
+};
+const writeRefresh = (t: string | null) => {
+  try {
+    if (t) localStorage.setItem(REFRESH_KEY, t);
+    else localStorage.removeItem(REFRESH_KEY);
+  } catch {
+    /* storage unavailable: the session just won't survive a reload */
+  }
+};
+
+function setSession(s: { accessToken: string; refreshToken: string; user: User } | null) {
+  accessToken = s?.accessToken ?? null;
+  currentUser = s?.user ?? null;
+  writeRefresh(s?.refreshToken ?? null);
+  listeners.forEach((fn) => fn(currentUser));
+}
+
+/** Called with the user on sign-in and with null on sign-out or when the session ends. */
+export function onSessionChange(fn: (u: User | null) => void) {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+export const hasStoredSession = () => readRefresh() !== null;
+
+async function send(path: string, init: RequestInit, token: string | null): Promise<Response> {
+  try {
+    return await fetch(`${BASE}${path}`, {
       ...init,
       headers: {
         Accept: 'application/json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(write ? { 'X-API-Key': KEY } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init.headers,
       },
     });
   } catch {
     throw new ApiError(0, 'NETWORK_ERROR', `Can't reach the API at ${BASE}`);
   }
+}
+
+async function parse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -42,6 +105,56 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, e?.code ?? 'HTTP_ERROR', e?.message ?? `Request failed (${res.status})`, e?.details);
   }
   return body as T;
+}
+
+const withTabLock = <T,>(fn: () => Promise<T>): Promise<T> =>
+  typeof navigator !== 'undefined' && navigator.locks ? navigator.locks.request('roastline-refresh', fn) : fn();
+
+/** Swaps the stored refresh token for a new session. Concurrent callers share one request. */
+export function refreshSession(): Promise<User> {
+  refreshing ??= withTabLock(async () => {
+    // Read inside the lock: another tab may have just rotated the token.
+    const token = readRefresh();
+    if (!token) throw new ApiError(401, 'UNAUTHORIZED', 'Not signed in');
+    try {
+      const s = await parse<{ accessToken: string; refreshToken: string; user: User }>(
+        await send('/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken: token }) }, null),
+      );
+      setSession(s);
+      return s.user;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) setSession(null);
+      throw e;
+    }
+  }).finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+export async function login(email: string, password: string): Promise<User> {
+  const s = await parse<{ accessToken: string; refreshToken: string; user: User }>(
+    await send('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, null),
+  );
+  setSession(s);
+  return s.user;
+}
+
+export async function logout() {
+  const token = readRefresh();
+  setSession(null);
+  if (token) await send('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken: token }) }, null).catch(() => {});
+}
+
+/** Authenticated request: on a 401, refresh the session once and retry. */
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (!accessToken && hasStoredSession()) await refreshSession();
+  let res = await send(path, init, accessToken);
+  if (res.status === 401 && hasStoredSession()) {
+    await refreshSession();
+    res = await send(path, init, accessToken);
+  }
+  return parse<T>(res);
 }
 
 /* ---------- API shapes ---------- */

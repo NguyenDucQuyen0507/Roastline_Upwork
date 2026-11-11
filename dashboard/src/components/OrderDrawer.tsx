@@ -16,11 +16,13 @@ export function OrderDrawer({
   onClose,
   onAdvance,
   busy = false,
+  canAdvance = true,
 }: {
   order: Order | null;
   onClose: () => void;
   onAdvance: (o: Order, to: OrderStatus) => void;
   busy?: boolean;
+  canAdvance?: boolean;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -98,7 +100,9 @@ export function OrderDrawer({
 
         <footer className="drawer-foot">
           <StatusBadge status={order.status} />
-          {next ? (
+          {next && !canAdvance ? (
+            <span className="muted small">View only: your role can't change orders.</span>
+          ) : next ? (
             <button type="button" className="btn-primary" disabled={busy} onClick={() => onAdvance(order, next.to)}>
               {busy ? 'Saving…' : next.label}
             </button>

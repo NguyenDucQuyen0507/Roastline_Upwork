@@ -12,8 +12,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "24"
-      - key: API_KEY
-        value: demo-key # public on purpose: visitors use it in Swagger "Try it out"
+      - key: JWT_SECRET
+        generateValue: true # random secret for signing access tokens
       - key: DATABASE_URL
         sync: false # PostgreSQL connection string (e.g. Neon free tier). Unset = in-memory demo data.
       - key: CORS_ORIGIN

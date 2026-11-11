@@ -23,7 +23,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://roastline:roastline@db:5432/roastline
-      API_KEY: ${API_KEY:-demo-key}
+      JWT_SECRET: ${JWT_SECRET:-change-me-local-docker-secret}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:

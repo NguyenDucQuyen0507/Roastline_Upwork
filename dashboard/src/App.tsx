@@ -1,6 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Batch, GreenStock as Stock, NOW, Order, OrderStatus, orderKg, ShippedWeek } from './data';
-import { advanceOrder, ApiError, fetchBatches, fetchOrders, fetchShippedByWeek, fetchStock } from './api';
+import {
+  advanceOrder,
+  ApiError,
+  can,
+  fetchBatches,
+  fetchOrders,
+  fetchShippedByWeek,
+  fetchStock,
+  hasStoredSession,
+  logout,
+  onSessionChange,
+  refreshSession,
+  type User,
+} from './api';
+import { SignIn } from './components/SignIn';
 import { longDate, usd } from './format';
 import { RoastSchedule } from './components/RoastSchedule';
 import { OrdersTable } from './components/OrdersTable';
@@ -12,6 +26,15 @@ import { InventoryTable } from './components/InventoryTable';
 import { CustomersTable } from './components/CustomersTable';
 
 type Theme = 'light' | 'dark';
+
+const ROLE_LABEL = { admin: 'Admin', production: 'Production', viewer: 'Viewer (read only)' } as const;
+const initials = (name: string) =>
+  name
+    .split(' ')
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
 /** Each page has its own #hash so the browser Back button and shared links work. */
 const VIEWS = [
@@ -42,6 +65,9 @@ function readTheme(): Theme {
 }
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [checkingSession, setCheckingSession] = useState(hasStoredSession);
+  const [signInNotice, setSignInNotice] = useState<string | undefined>();
   const [orders, setOrders] = useState<Order[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [greenStock, setGreenStock] = useState<Stock[]>([]);
@@ -55,6 +81,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [navOpen, setNavOpen] = useState(false);
   const [view, setView] = useState<ViewId>(readView);
+  const signOutRef = useRef<() => Promise<void>>(undefined);
 
   useEffect(() => {
     const onHash = () => {
@@ -83,6 +110,30 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Keep the signed-in user in sync with the API client (sign-in, refresh, expiry).
+  useEffect(() => {
+    let signedOutOnPurpose = false;
+    let signedIn = false;
+    const off = onSessionChange((u) => {
+      if (signedIn && !u && !signedOutOnPurpose) setSignInNotice('Your session ended. Please sign in again.');
+      if (u) setSignInNotice(undefined);
+      signedOutOnPurpose = false;
+      signedIn = !!u;
+      setUser(u);
+    });
+    signOutRef.current = () => {
+      signedOutOnPurpose = true;
+      setSignInNotice(undefined);
+      return logout();
+    };
+    if (hasStoredSession()) {
+      refreshSession()
+        .catch(() => {})
+        .finally(() => setCheckingSession(false));
+    }
+    return off;
+  }, []);
+
   const load = useCallback(async () => {
     setLoadState('loading');
     try {
@@ -99,8 +150,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (user) load();
+  }, [user?.id, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const advance = useCallback(async (o: Order, to: OrderStatus) => {
     setBusy(true);
@@ -114,6 +165,7 @@ export default function App() {
       // The server is the source of truth: on a conflict (e.g. someone else already
       // moved this order) show its message and reload the order from the list.
       setToast(e instanceof ApiError ? `Couldn't update ${o.id}: ${e.message}` : `Couldn't update ${o.id}`);
+      if (e instanceof ApiError && e.status === 401) return;
       if (e instanceof ApiError && e.status === 409) {
         fetchOrders()
           .then((list) => {
@@ -144,6 +196,15 @@ export default function App() {
     ];
   }, [orders, greenStock]);
 
+  if (checkingSession) {
+    return (
+      <div className="signin">
+        <p className="muted">Loading…</p>
+      </div>
+    );
+  }
+  if (!user) return <SignIn notice={signInNotice} />;
+
   return (
     <div className="app">
       <a className="skip" href="#main">Skip to content</a>
@@ -169,11 +230,14 @@ export default function App() {
           </ul>
         </nav>
         <div className="sidebar-foot">
-          <div className="avatar" aria-hidden="true">MO</div>
-          <div>
-            <div>Mara Okafor</div>
-            <div className="small faint">Production lead</div>
+          <div className="avatar" aria-hidden="true">{initials(user.name)}</div>
+          <div className="user-meta">
+            <div>{user.name}</div>
+            <div className="small faint">{ROLE_LABEL[user.role]}</div>
           </div>
+          <button type="button" className="signout" onClick={() => signOutRef.current?.()}>
+            Sign out
+          </button>
         </div>
         </div>
       </aside>
@@ -276,7 +340,7 @@ export default function App() {
         </main>
       </div>
 
-      <OrderDrawer order={open} onClose={closeDrawer} onAdvance={advance} busy={busy} />
+      <OrderDrawer order={open} onClose={closeDrawer} onAdvance={advance} busy={busy} canAdvance={can.advanceOrder(user)} />
 
       <div className="toast-region" role="status" aria-live="polite">
         {toast && <div className="toast">{toast}</div>}

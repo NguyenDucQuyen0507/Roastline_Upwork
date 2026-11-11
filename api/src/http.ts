@@ -1,9 +1,22 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { z } from 'zod';
+import { verifyAccessToken, type AuthUser } from './auth.js';
+import type { Role } from './domain.js';
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      /** Set by `authenticate` for signed-in requests. */
+      user?: AuthUser;
+    }
+  }
+}
 
 export type ErrorCode =
   | 'VALIDATION_ERROR'
   | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'INVALID_TRANSITION'
   | 'ORDER_LOCKED'
@@ -41,15 +54,39 @@ export function parse<T extends z.ZodType>(schema: T, input: unknown): z.infer<T
   return result.data;
 }
 
-/** Write operations need the X-API-Key header. Reads are public. */
-export const requireApiKey: RequestHandler = (req, _res, next) => {
-  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
-  const expected = process.env.API_KEY ?? 'demo-key';
-  if (req.get('X-API-Key') !== expected) {
-    return next(new ApiError(401, 'UNAUTHORIZED', 'A valid X-API-Key header is required'));
+/** Requires `Authorization: Bearer <access token>` and puts the user on `req.user`. */
+export const authenticate: RequestHandler = async (req, _res, next) => {
+  const [scheme, token] = (req.get('Authorization') ?? '').split(' ');
+  if (scheme !== 'Bearer' || !token) {
+    return next(new ApiError(401, 'UNAUTHORIZED', 'Sign in first: send Authorization: Bearer <access token>'));
   }
+  const result = await verifyAccessToken(token);
+  if (!result.ok) {
+    return next(
+      new ApiError(401, 'UNAUTHORIZED', result.reason === 'expired' ? 'Access token expired' : 'Invalid access token', {
+        reason: result.reason,
+      }),
+    );
+  }
+  req.user = result.user;
   next();
 };
+
+/** Allows the request only for the given roles. Use after `authenticate`. */
+export const requireRole =
+  (...roles: Role[]): RequestHandler =>
+  (req, _res, next) => {
+    const role = req.user?.role;
+    if (!role || !roles.includes(role)) {
+      return next(
+        new ApiError(403, 'FORBIDDEN', `This action needs one of these roles: ${roles.join(', ')}`, {
+          requiredRoles: roles,
+          role: role ?? null,
+        }),
+      );
+    }
+    next();
+  };
 
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof ApiError) {

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { COFFEE_IDS, round1, stockLevel, type StockRecord } from '../domain.js';
 import { coffees, shippedByWeek } from '../seed.js';
-import { ApiError, notFound, parse } from '../http.js';
+import { ApiError, notFound, parse, requireRole } from '../http.js';
 import type { Store } from '../store/index.js';
 import { presentOrder } from './orders.js';
 
@@ -43,7 +43,7 @@ export function inventoryRouter(store: Store) {
     res.json({ data: rows });
   });
 
-  r.post('/:coffeeId/receipts', async (req, res) => {
+  r.post('/:coffeeId/receipts', requireRole('admin', 'production'), async (req, res) => {
     const idCheck = coffeeIdParam.safeParse(req.params.coffeeId);
     if (!idCheck.success) throw notFound(`Green stock for ${req.params.coffeeId}`);
     const { kg } = parse(receipt, req.body);

@@ -10,6 +10,27 @@ export const ORDER_STATUSES = ['New', 'Roasting', 'Packed', 'Shipped'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export const ROASTERS = ['Probat P12', 'Loring S15'] as const;
+
+export const ROLES = ['admin', 'production', 'viewer'] as const;
+export type Role = (typeof ROLES)[number];
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  passwordHash: string;
+}
+
+export interface RefreshTokenRecord {
+  id: string;
+  userId: string;
+  /** All tokens issued from one login share a family; reuse of an old one revokes the family. */
+  familyId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  revokedAt: Date | null;
+}
 export type Roaster = (typeof ROASTERS)[number];
 
 export interface Coffee {

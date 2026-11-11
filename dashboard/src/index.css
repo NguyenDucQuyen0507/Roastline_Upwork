@@ -1138,3 +1138,158 @@ button {
   opacity: 0.6;
   cursor: progress;
 }
+
+/* ---------- sign-in ---------- */
+.signin {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--paper);
+}
+.signin-card {
+  width: min(440px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 28px;
+  display: grid;
+  gap: 14px;
+}
+.signin-card h1 {
+  font-size: 26px;
+}
+.brand-dark {
+  padding: 0 0 6px;
+  color: var(--text);
+}
+.form {
+  display: grid;
+  gap: 14px;
+}
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+.field > span {
+  font-weight: 500;
+}
+.field input,
+.field select,
+.field textarea {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  width: 100%;
+}
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: 2px solid var(--amber);
+  outline-offset: -1px;
+  border-color: var(--amber);
+}
+.field[data-invalid='true'] input,
+.field[data-invalid='true'] select {
+  border-color: var(--cherry);
+}
+.field-error {
+  color: var(--cherry);
+  font-size: 13px;
+}
+.form-error {
+  color: var(--cherry);
+  background: var(--cherry-soft);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 14px;
+  margin: 0;
+}
+.form-notice {
+  background: var(--s-roasting-bg);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 14px;
+  margin: 0;
+}
+.btn-block {
+  width: 100%;
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+  filter: none;
+}
+.demo-accounts {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+.demo-accounts h2 {
+  font-size: 15px;
+}
+.demo-accounts ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.demo-account {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: baseline;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+}
+.demo-account:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--faint);
+}
+.demo-account .small {
+  grid-column: 1 / -1;
+}
+.demo-role {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--s-new);
+  background: var(--s-new-bg);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.demo-name {
+  font-weight: 500;
+}
+.demo-accounts code {
+  font-size: 13px;
+  background: var(--hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.user-meta {
+  min-width: 0;
+  flex: 1;
+}
+.signout {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e8efec;
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.signout:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

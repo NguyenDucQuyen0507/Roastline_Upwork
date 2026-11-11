@@ -13,6 +13,7 @@ The sidebar switches between five pages, each with its own address (`#overview`,
 - **Customers:** wholesale customers with order count, open orders, kg and revenue; sortable and searchable.
 
 ## Features
+- **Sign-in with roles:** one-click demo accounts (admin, production, viewer). The session survives a reload: the access token stays in memory, the refresh token in localStorage, and expired tokens are refreshed once and the request retried. Refreshes are shared between tabs with the Web Locks API, because the API rotates refresh tokens and treats a reused one as stolen. Actions a role can't perform are hidden.
 - **KPI strip:** kg leaving today, new orders, revenue booked this week, green coffee below reorder point.
 - **Roast schedule timeline:** today's batches on two roasters from 06:00 to 18:00, shaded by roast level, with a live "now" marker. Click a batch for details. On phones the timeline opens centred on the current time.
 - **Wholesale orders table:** search (café, city, order ID, coffee), status filter tabs with counts, sortable columns, pagination. Turns into a card list on mobile.
@@ -37,7 +38,6 @@ Environment variables (see `.env.example`):
 | Name | Default | Purpose |
 |---|---|---|
 | `VITE_API_URL` | `/api/v1` | API base URL. Set it for production builds, e.g. `https://your-api.onrender.com/api/v1` |
-| `VITE_API_KEY` | `demo-key` | Sent as `X-API-Key` on writes. It ends up in the browser bundle, so use a demo key only |
 | `API_PROXY_TARGET` | `http://localhost:3000` | Where the dev server proxies `/api` |
 
 ## Deploy (free) on Netlify
@@ -46,14 +46,14 @@ The repository root includes a [`netlify.toml`](../netlify.toml) that builds thi
 
 1. Deploy the API first and note its URL.
 2. On [netlify.com](https://netlify.com): **Add new site > Import an existing project**, pick this repository.
-3. Under **Environment variables** set `VITE_API_URL` to `https://<your-api>.onrender.com/api/v1` (and `VITE_API_KEY` if the API doesn't use `demo-key`), then deploy.
+3. Under **Environment variables** set `VITE_API_URL` to `https://<your-api>.onrender.com/api/v1`, then deploy.
 4. Set `CORS_ORIGIN` on the API to the Netlify URL.
 
 ## Structure
 ```
 src/
   App.tsx                 layout, KPIs, theme, toast
-  api.ts                  API client; maps API responses onto the dashboard's types
+  api.ts                  API client and session handling; maps API responses onto the dashboard's types
   data.ts                 types, plus a reference copy of the sample data
   format.ts               date / currency helpers
   components/
@@ -65,5 +65,6 @@ src/
     BatchList.tsx         Roasting page batch table
     InventoryTable.tsx    Inventory page stock table
     CustomersTable.tsx    Customers page table
+    SignIn.tsx            Sign-in screen with demo accounts
   index.css               design tokens and all styles
 ```
