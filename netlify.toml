@@ -1,6 +1,7 @@
-# Netlify: Add new site > Import from Git > pick this repository.
+# Netlify: Add new site > Import from Git > pick this repository. Builds the dashboard in dashboard/.
 # Set VITE_API_URL (and VITE_API_KEY) under Site configuration > Environment variables.
 [build]
+  base = "dashboard"
   command = "npm run build"
   publish = "dist"
 

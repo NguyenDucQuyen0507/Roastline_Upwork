@@ -1,6 +1,6 @@
 # Roastline API
 
-REST API behind the [Roastline dashboard](../roastline-dashboard): an operations tool for a small wholesale coffee roaster. It covers orders, the daily roast schedule, green coffee inventory, customers and shipping reports.
+REST API behind the [Roastline dashboard](../dashboard): an operations tool for a small wholesale coffee roaster. It covers orders, the daily roast schedule, green coffee inventory, customers and shipping reports.
 
 **Stack:** Node.js 20+, Express 5, TypeScript, PostgreSQL (`pg`), Zod (validation), OpenAPI 3 + Swagger UI, Docker, Vitest + Supertest.
 
@@ -123,7 +123,7 @@ docker-compose.yml    API + PostgreSQL
 
 ## Deploy (free) on Render
 
-The repository includes a [Render Blueprint](render.yaml).
+The repository root includes a [Render Blueprint](../render.yaml) that deploys this folder (`rootDir: api`).
 
 1. Push this repository to GitHub.
 2. On [render.com](https://render.com): **New > Blueprint**, pick the repository.

@@ -21,10 +21,10 @@ The sidebar switches between five pages, each with its own address (`#overview`,
 - **Kg shipped by origin:** stacked bar chart for the last six weeks.
 - Dark mode toggle (remembered per browser), keyboard focus states, reduced-motion support, accessible labels.
 
-Data comes from the [Roastline API](../../roastline-api) (`src/api.ts`): orders, roast batches, green stock and the weekly shipping report are loaded on start, and moving an order to its next status is a `POST /orders/{id}/status` call, so the server enforces the workflow. The demo clock is fixed at 10:40 so screenshots stay consistent. `src/data.ts` keeps the dashboard's types and a reference copy of the sample data.
+Data comes from the [Roastline API](../api) (`src/api.ts`): orders, roast batches, green stock and the weekly shipping report are loaded on start, and moving an order to its next status is a `POST /orders/{id}/status` call, so the server enforces the workflow. The demo clock is fixed at 10:40 so screenshots stay consistent. `src/data.ts` keeps the dashboard's types and a reference copy of the sample data.
 
 ## Run it
-Start the API first (`cd ../../roastline-api && npm run dev`, port 3000). In development Vite proxies `/api` to it.
+Start the API first (`cd ../api && npm run dev`, port 3000). In development Vite proxies `/api` to it.
 ```bash
 npm install
 npm run dev      # development server
@@ -42,7 +42,7 @@ Environment variables (see `.env.example`):
 
 ## Deploy (free) on Netlify
 
-The repository includes a [`netlify.toml`](netlify.toml).
+The repository root includes a [`netlify.toml`](../netlify.toml) that builds this folder (`base = "dashboard"`).
 
 1. Deploy the API first and note its URL.
 2. On [netlify.com](https://netlify.com): **Add new site > Import an existing project**, pick this repository.

@@ -1,9 +1,10 @@
 # Render Blueprint: https://render.com/docs/blueprint-spec
-# New > Blueprint > pick this repository.
+# New > Blueprint > pick this repository. Deploys the API in api/.
 services:
   - type: web
     name: roastline-api
     runtime: node
+    rootDir: api
     plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start
