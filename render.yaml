@@ -6,12 +6,15 @@ services:
     runtime: node
     rootDir: api
     plan: free
-    buildCommand: npm ci && npm run build
+    # --include=dev: NODE_ENV=production would otherwise skip TypeScript at build time.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_VERSION
         value: "24"
+      - key: NODE_ENV
+        value: production # the API refuses to start without JWT_SECRET in production
       - key: JWT_SECRET
         generateValue: true # random secret for signing access tokens
       - key: DATABASE_URL

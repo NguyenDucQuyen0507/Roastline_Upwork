@@ -1,6 +1,9 @@
 import { createApp } from './app.js';
 import { createStore } from './store/index.js';
 import { endEventStreams } from './routes/events.js';
+import { checkAuthConfig } from './auth.js';
+
+checkAuthConfig();
 
 const port = Number(process.env.PORT ?? 3000);
 const store = await createStore();

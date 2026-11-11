@@ -50,6 +50,11 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
+/** Fails at startup (instead of at the first sign-in) when production has no JWT_SECRET. */
+export function checkAuthConfig() {
+  secret();
+}
+
 export interface AuthUser {
   id: string;
   email: string;
