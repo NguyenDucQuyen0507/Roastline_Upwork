@@ -1,0 +1,43 @@
+{
+  "name": "roastline-api",
+  "version": "1.0.0",
+  "description": "REST API for the Roastline coffee roaster dashboard (Node.js, Express, TypeScript, OpenAPI)",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:pg": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://roastline:roastline@localhost:5432/roastline_test} vitest run",
+    "db:up": "docker compose up -d db",
+    "db:reset": "tsx src/db/reset.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
+    "@types/swagger-ui-express": "^4.1.8",
+    "supertest": "^7.3.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

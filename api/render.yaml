@@ -1,0 +1,19 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# New > Blueprint > pick this repository.
+services:
+  - type: web
+    name: roastline-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: API_KEY
+        value: demo-key # public on purpose: visitors use it in Swagger "Try it out"
+      - key: DATABASE_URL
+        sync: false # PostgreSQL connection string (e.g. Neon free tier). Unset = in-memory demo data.
+      - key: CORS_ORIGIN
+        sync: false # e.g. https://roastline-dashboard.netlify.app
