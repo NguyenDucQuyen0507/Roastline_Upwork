@@ -4,6 +4,9 @@ import {
   advanceOrder,
   ApiError,
   can,
+  cancelBatch,
+  fetchCoffees,
+  type Coffee,
   fetchBatches,
   fetchOrders,
   fetchShippedByWeek,
@@ -15,6 +18,17 @@ import {
   type User,
 } from './api';
 import { SignIn } from './components/SignIn';
+import { NewOrderForm } from './components/NewOrderForm';
+import { EditOrderForm } from './components/EditOrderForm';
+import { BatchForm } from './components/BatchForm';
+import { ReceiveForm } from './components/ReceiveForm';
+
+type OpenForm =
+  | { kind: 'newOrder' }
+  | { kind: 'editOrder'; order: Order }
+  | { kind: 'batch' }
+  | { kind: 'receive'; stock: Stock }
+  | null;
 import { longDate, usd } from './format';
 import { RoastSchedule } from './components/RoastSchedule';
 import { OrdersTable } from './components/OrdersTable';
@@ -72,6 +86,8 @@ export default function App() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [greenStock, setGreenStock] = useState<Stock[]>([]);
   const [shipped, setShipped] = useState<ShippedWeek[]>([]);
+  const [coffees, setCoffees] = useState<Coffee[]>([]);
+  const [form, setForm] = useState<OpenForm>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -137,11 +153,18 @@ export default function App() {
   const load = useCallback(async () => {
     setLoadState('loading');
     try {
-      const [o, b, s, w] = await Promise.all([fetchOrders(), fetchBatches(), fetchStock(), fetchShippedByWeek()]);
+      const [o, b, s, w, c] = await Promise.all([
+        fetchOrders(),
+        fetchBatches(),
+        fetchStock(),
+        fetchShippedByWeek(),
+        fetchCoffees(),
+      ]);
       setOrders(o);
       setBatches(b);
       setGreenStock(s);
       setShipped(w);
+      setCoffees(c);
       setLoadState('ready');
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
@@ -180,6 +203,55 @@ export default function App() {
   }, []);
 
   const closeDrawer = useCallback(() => setOpen(null), []);
+  const closeForm = useCallback(() => setForm(null), []);
+
+  /** Batches change green stock on the server, so reload both after a batch is added or removed. */
+  const reloadSchedule = useCallback(async () => {
+    const [b, s] = await Promise.all([fetchBatches(), fetchStock()]);
+    setBatches(b);
+    setGreenStock(s);
+  }, []);
+
+  const onOrderCreated = useCallback((o: Order) => {
+    setOrders((list) => [...list, o]);
+    setForm(null);
+    setToast(`Order ${o.id} created for ${o.customer}`);
+  }, []);
+
+  const onOrderSaved = useCallback((o: Order) => {
+    setOrders((list) => list.map((x) => (x.id === o.id ? o : x)));
+    setOpen((cur) => (cur?.id === o.id ? o : cur));
+    setForm(null);
+    setToast(`Saved ${o.id}`);
+  }, []);
+
+  const onBatchCreated = useCallback(
+    (b: Batch) => {
+      setForm(null);
+      setToast(`Scheduled ${b.coffee} on the ${b.roaster} at ${String(Math.floor(b.start / 60)).padStart(2, '0')}:${String(b.start % 60).padStart(2, '0')}`);
+      reloadSchedule().catch(() => {});
+    },
+    [reloadSchedule],
+  );
+
+  const onBatchCancel = useCallback(
+    async (b: Batch) => {
+      try {
+        await cancelBatch(b.id);
+        setToast(`Cancelled ${b.coffee}; green coffee returned to stock`);
+      } catch (e) {
+        setToast(e instanceof ApiError ? `Couldn't cancel: ${e.message}` : "Couldn't cancel the batch");
+      }
+      await reloadSchedule().catch(() => {});
+    },
+    [reloadSchedule],
+  );
+
+  const onStockSaved = useCallback((s: Stock) => {
+    setGreenStock((list) => list.map((x) => (x.coffeeId === s.coffeeId ? s : x)));
+    setForm(null);
+    setToast(`Received coffee: ${s.coffee} now ${s.kg} kg`);
+  }, []);
 
   const kpis = useMemo(() => {
     const today = orders.filter((o) => o.due === NOW.date);
@@ -235,8 +307,10 @@ export default function App() {
             <div>{user.name}</div>
             <div className="small faint">{ROLE_LABEL[user.role]}</div>
           </div>
-          <button type="button" className="signout" onClick={() => signOutRef.current?.()}>
-            Sign out
+          <button type="button" className="signout" onClick={() => signOutRef.current?.()} aria-label="Sign out" title="Sign out">
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+              <path d="M8 4H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M13 14l4-4-4-4M17 10H8" stroke="currentColor" strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </div>
         </div>
@@ -306,7 +380,7 @@ export default function App() {
           <RoastSchedule batches={batches} />
 
           <div className="grid">
-            <OrdersTable orders={orders} query={query} onOpen={setOpen} />
+            <OrdersTable orders={orders} query={query} onOpen={setOpen} onNew={can.editOrders(user) ? () => setForm({ kind: 'newOrder' }) : undefined} />
             <div className="side-stack">
               <GreenStock stock={greenStock} />
               <ShippedChart data={shipped} />
@@ -315,12 +389,24 @@ export default function App() {
           </>
           )}
 
-          {view === 'orders' && <OrdersTable orders={orders} query={query} onOpen={setOpen} pageSize={15} />}
+          {view === 'orders' && (
+            <OrdersTable
+              orders={orders}
+              query={query}
+              onOpen={setOpen}
+              onNew={can.editOrders(user) ? () => setForm({ kind: 'newOrder' }) : undefined}
+              pageSize={15}
+            />
+          )}
 
           {view === 'roasting' && (
             <div className="stack">
               <RoastSchedule batches={batches} />
-              <BatchList batches={batches} />
+              <BatchList
+                batches={batches}
+                onSchedule={can.manageBatches(user) ? () => setForm({ kind: 'batch' }) : undefined}
+                onCancel={can.manageBatches(user) ? onBatchCancel : undefined}
+              />
             </div>
           )}
 
@@ -330,7 +416,11 @@ export default function App() {
                 <GreenStock stock={greenStock} />
                 <ShippedChart data={shipped} />
               </div>
-              <InventoryTable stock={greenStock} batches={batches} />
+              <InventoryTable
+                stock={greenStock}
+                batches={batches}
+                onReceive={can.receiveStock(user) ? (stock) => setForm({ kind: 'receive', stock }) : undefined}
+              />
             </div>
           )}
 
@@ -340,7 +430,19 @@ export default function App() {
         </main>
       </div>
 
-      <OrderDrawer order={open} onClose={closeDrawer} onAdvance={advance} busy={busy} canAdvance={can.advanceOrder(user)} />
+      <OrderDrawer
+        order={form ? null : open}
+        onClose={closeDrawer}
+        onAdvance={advance}
+        busy={busy}
+        canAdvance={can.advanceOrder(user)}
+        onEdit={can.editOrders(user) ? (order) => setForm({ kind: 'editOrder', order }) : undefined}
+      />
+
+      {form?.kind === 'newOrder' && <NewOrderForm coffees={coffees} orders={orders} onClose={closeForm} onCreated={onOrderCreated} />}
+      {form?.kind === 'editOrder' && <EditOrderForm order={form.order} onClose={closeForm} onSaved={onOrderSaved} />}
+      {form?.kind === 'batch' && <BatchForm coffees={coffees} batches={batches} onClose={closeForm} onCreated={onBatchCreated} />}
+      {form?.kind === 'receive' && <ReceiveForm stock={form.stock} onClose={closeForm} onSaved={onStockSaved} />}
 
       <div className="toast-region" role="status" aria-live="polite">
         {toast && <div className="toast">{toast}</div>}

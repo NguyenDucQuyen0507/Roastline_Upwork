@@ -31,8 +31,8 @@ export function presentOrder(o: Order) {
   };
 }
 
-const isoDate = z.iso.date();
-const notInPast = isoDate.refine((d) => d >= TODAY, { message: `Must be ${TODAY} or later` });
+const isoDate = z.iso.date('Use a date like 2026-11-09');
+const notInPast = isoDate.refine((d) => d >= TODAY, { message: 'The due date can’t be in the past' });
 
 const listQuery = z.object({
   status: z
@@ -49,20 +49,20 @@ const listQuery = z.object({
 });
 
 const newOrder = z.object({
-  customer: z.string().trim().min(2).max(80),
-  city: z.string().trim().min(2).max(60),
+  customer: z.string().trim().min(2, 'Enter the customer name (at least 2 characters)').max(80, 'Use at most 80 characters'),
+  city: z.string().trim().min(2, 'Enter a city (at least 2 characters)').max(60, 'Use at most 60 characters'),
   lines: z
     .array(
       z.object({
         coffeeId: z.enum(COFFEE_IDS),
-        kg: z.number().min(0.5).max(200),
+        kg: z.number({ error: 'Enter a weight in kg' }).min(0.5, 'At least 0.5 kg').max(200, 'At most 200 kg per line'),
         grind: z.enum(GRINDS),
       }),
     )
-    .min(1)
-    .max(10),
+    .min(1, 'Add at least one coffee')
+    .max(10, 'At most 10 coffees per order'),
   due: notInPast,
-  note: z.string().trim().max(280).optional(),
+  note: z.string().trim().max(280, 'Use at most 280 characters').optional(),
 });
 
 const orderUpdate = z

@@ -1171,6 +1171,7 @@ button {
   display: grid;
   gap: 6px;
   font-size: 14px;
+  align-content: start;
 }
 .field > span {
   font-weight: 500;
@@ -1282,14 +1283,157 @@ button {
   min-width: 0;
   flex: 1;
 }
+.user-meta > div {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .signout {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: transparent;
   color: #e8efec;
   border-radius: 6px;
-  padding: 5px 9px;
-  font-size: 12px;
 }
 .signout:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- forms in drawers ---------- */
+.form-drawer {
+  flex: 1;
+  align-content: start;
+}
+.form-drawer .drawer-foot {
+  justify-content: flex-end;
+}
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.field-row .narrow {
+  max-width: 140px;
+}
+.lines-edit,
+.roast-pick {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+.lines-edit legend,
+.roast-pick legend {
+  font-weight: 500;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.line-edit {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--line);
+}
+.line-edit .grow {
+  grid-column: 1 / -1;
+}
+.line-edit .field > span:first-child {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.line-remove {
+  width: 38px;
+  height: 38px;
+  margin-top: 25px;
+}
+.lines-edit > .btn-ghost {
+  justify-self: start;
+}
+.estimate {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+  padding: 10px 12px;
+  background: var(--hover);
+  border-radius: 6px;
+}
+.roast-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.roast-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.roast-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.roast-option.is-active {
+  border-color: var(--amber);
+  background: var(--s-roasting-bg);
+}
+.roast-option:focus-within {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
+}
+.title-with-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+.btn-danger {
+  border: 0;
+  border-radius: 6px;
+  background: var(--cherry);
+  color: #fff;
+  font-weight: 500;
+}
+.btn-danger:disabled {
+  opacity: 0.6;
+}
+.row-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.confirm {
+  display: inline-flex;
+  gap: 6px;
+}
+.head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+@media (max-width: 560px) {
+  .field-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .field-row .narrow {
+    max-width: none;
+  }
 }

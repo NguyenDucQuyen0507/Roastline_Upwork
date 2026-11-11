@@ -17,12 +17,15 @@ export function OrderDrawer({
   onAdvance,
   busy = false,
   canAdvance = true,
+  onEdit,
 }: {
   order: Order | null;
   onClose: () => void;
   onAdvance: (o: Order, to: OrderStatus) => void;
   busy?: boolean;
   canAdvance?: boolean;
+  /** Shown as an "Edit" button for New orders when the user may edit them. */
+  onEdit?: (o: Order) => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -53,9 +56,16 @@ export function OrderDrawer({
             <h2 id="drawer-title">{order.customer}</h2>
             <p className="muted">{order.city}, due {dueLabel(order.due).toLowerCase()}</p>
           </div>
-          <button ref={closeRef} type="button" className="icon-btn" onClick={onClose} aria-label="Close order details">
-            ✕
-          </button>
+          <div className="head-actions">
+            {onEdit && order.status === 'New' && (
+              <button type="button" className="btn-ghost" onClick={() => onEdit(order)}>
+                Edit
+              </button>
+            )}
+            <button ref={closeRef} type="button" className="icon-btn" onClick={onClose} aria-label="Close order details">
+              ✕
+            </button>
+          </div>
         </header>
 
         <ol className="flow" aria-label="Order progress">

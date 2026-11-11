@@ -13,6 +13,7 @@ The sidebar switches between five pages, each with its own address (`#overview`,
 - **Customers:** wholesale customers with order count, open orders, kg and revenue; sortable and searchable.
 
 ## Features
+- **Forms backed by the API's rules:** create an order (several coffees, live estimate, known customers autofill the city), edit a New order, schedule a roast (suggests the roaster's next free slot, shows busy times and the green coffee it will use), cancel a batch, record a green coffee delivery. Validation and business errors from the server appear next to the field they concern: a schedule clash under the start time, roaster capacity or missing green stock under the weight.
 - **Sign-in with roles:** one-click demo accounts (admin, production, viewer). The session survives a reload: the access token stays in memory, the refresh token in localStorage, and expired tokens are refreshed once and the request retried. Refreshes are shared between tabs with the Web Locks API, because the API rotates refresh tokens and treats a reused one as stolen. Actions a role can't perform are hidden.
 - **KPI strip:** kg leaving today, new orders, revenue booked this week, green coffee below reorder point.
 - **Roast schedule timeline:** today's batches on two roasters from 06:00 to 18:00, shaded by roast level, with a live "now" marker. Click a batch for details. On phones the timeline opens centred on the current time.
@@ -66,5 +67,10 @@ src/
     InventoryTable.tsx    Inventory page stock table
     CustomersTable.tsx    Customers page table
     SignIn.tsx            Sign-in screen with demo accounts
+    FormDrawer.tsx        Drawer + field wrapper shared by the forms
+    NewOrderForm.tsx      Create an order
+    EditOrderForm.tsx     Edit due date / note of a New order
+    BatchForm.tsx         Schedule a roast batch
+    ReceiveForm.tsx       Record a green coffee delivery
   index.css               design tokens and all styles
 ```

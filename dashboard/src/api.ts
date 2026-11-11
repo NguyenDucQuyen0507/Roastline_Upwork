@@ -231,6 +231,7 @@ const toBatch = (b: ApiBatch): Batch => ({
 });
 
 const toStock = (s: ApiStock): GreenStock => ({
+  coffeeId: s.coffeeId,
   coffee: s.coffee,
   origin: s.origin,
   kg: s.kg,
@@ -264,4 +265,63 @@ export async function advanceOrder(id: string, to: OrderStatus): Promise<Order> 
     body: JSON.stringify({ status: to }),
   });
   return toOrder(o);
+}
+
+/* ---------- writes used by the forms ---------- */
+
+export interface Coffee {
+  id: string;
+  name: string;
+  origin: string;
+  pricePerKg: number;
+  isBlend: boolean;
+}
+
+export const fetchCoffees = async () => (await request<{ data: Coffee[] }>('/coffees')).data;
+
+export interface NewOrder {
+  customer: string;
+  city: string;
+  due: string;
+  note?: string;
+  lines: { coffeeId: string; kg: number; grind: Order['lines'][number]['grind'] }[];
+}
+
+export const createOrder = async (body: NewOrder) =>
+  toOrder(await request<ApiOrder>('/orders', { method: 'POST', body: JSON.stringify(body) }));
+
+export const updateOrder = async (id: string, body: { due?: string; note?: string }) =>
+  toOrder(await request<ApiOrder>(`/orders/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }));
+
+export interface NewBatch {
+  coffeeId: string;
+  roaster: Batch['roaster'];
+  start: string; // HH:MM
+  durationMin: number;
+  kg: number;
+  roastLevel: number;
+}
+
+export const createBatch = async (body: NewBatch) =>
+  toBatch(await request<ApiBatch>('/batches', { method: 'POST', body: JSON.stringify(body) }));
+
+export const cancelBatch = (id: string) => request<void>(`/batches/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+export const recordReceipt = async (coffeeId: string, body: { kg: number; supplierRef?: string }) =>
+  toStock(
+    await request<ApiStock>(`/inventory/${encodeURIComponent(coffeeId)}/receipts`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  );
+
+/**
+ * Field-level messages from a 400 VALIDATION_ERROR, keyed by the API's path
+ * (e.g. "customer", "lines.0.kg"), so forms can show them next to the input.
+ */
+export function fieldErrors(e: unknown): Record<string, string> {
+  if (!(e instanceof ApiError) || e.code !== 'VALIDATION_ERROR' || !Array.isArray(e.details)) return {};
+  const out: Record<string, string> = {};
+  for (const d of e.details as { path: string; message: string }[]) out[d.path || 'form'] ??= d.message;
+  return out;
 }

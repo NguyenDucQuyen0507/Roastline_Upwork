@@ -28,7 +28,10 @@ export function coffeesRouter() {
 }
 
 const inventoryQuery = z.object({ level: z.enum(['ok', 'low', 'critical']).optional() });
-const receipt = z.object({ kg: z.number().min(1), supplierRef: z.string().trim().max(40).optional() });
+const receipt = z.object({
+  kg: z.number({ error: 'Enter a weight in kg' }).min(1, 'At least 1 kg'),
+  supplierRef: z.string().trim().max(40, 'Use at most 40 characters').optional(),
+});
 const coffeeIdParam = z.enum(COFFEE_IDS);
 
 export function inventoryRouter(store: Store) {

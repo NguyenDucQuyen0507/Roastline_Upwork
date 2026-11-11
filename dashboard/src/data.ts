@@ -28,6 +28,7 @@ export interface Batch {
 }
 
 export interface GreenStock {
+  coffeeId?: string;
   coffee: string;
   origin: string;
   kg: number;

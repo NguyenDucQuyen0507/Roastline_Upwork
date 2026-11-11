@@ -1,7 +1,16 @@
 import { Batch, GreenStock } from '../data';
 
 /** Detailed stock table for the Inventory page, with days of cover at today's roasting rate. */
-export function InventoryTable({ stock, batches }: { stock: GreenStock[]; batches: Batch[] }) {
+export function InventoryTable({
+  stock,
+  batches,
+  onReceive,
+}: {
+  stock: GreenStock[];
+  batches: Batch[];
+  /** Shown as a "Receive" button per row when the user may record deliveries. */
+  onReceive?: (s: GreenStock) => void;
+}) {
   const usedToday = (coffee: string) => batches.filter((b) => b.coffee === coffee).reduce((s, b) => s + b.kg, 0);
 
   return (
@@ -23,6 +32,11 @@ export function InventoryTable({ stock, batches }: { stock: GreenStock[]; batche
               <th scope="col" className="num">Roasting today</th>
               <th scope="col" className="num">Days of cover</th>
               <th scope="col">Status</th>
+              {onReceive && (
+                <th scope="col">
+                  <span className="visually-hidden">Actions</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -41,6 +55,13 @@ export function InventoryTable({ stock, batches }: { stock: GreenStock[]; batche
                   <td>
                     {low ? <span className="alert-pill">Reorder</span> : <span className="state state-upcoming">In stock</span>}
                   </td>
+                  {onReceive && (
+                    <td className="row-actions">
+                      <button type="button" className="btn-ghost btn-sm" onClick={() => onReceive(s)} aria-label={`Receive ${s.coffee}`}>
+                        Receive
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

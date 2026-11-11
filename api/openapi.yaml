@@ -89,7 +89,7 @@ components:
               message: Request validation failed
               details:
                 - path: lines.0.kg
-                  message: 'Too small: expected number to be >=0.5'
+                  message: At least 0.5 kg
     Unauthorized:
       description: No access token, or it is invalid or expired (`details.reason` says which).
       content:

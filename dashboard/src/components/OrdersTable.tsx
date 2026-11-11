@@ -13,11 +13,14 @@ export function OrdersTable({
   orders,
   query,
   onOpen,
+  onNew,
   pageSize = 8,
 }: {
   orders: Order[];
   query: string;
   onOpen: (o: Order) => void;
+  /** Shown as a "New order" button when the user may create orders. */
+  onNew?: () => void;
   pageSize?: number;
 }) {
   const PAGE_SIZE = pageSize;
@@ -86,7 +89,14 @@ export function OrdersTable({
   return (
     <section className="orders" aria-labelledby="orders-title">
       <div className="section-head">
-        <h2 id="orders-title">Wholesale orders</h2>
+        <div className="title-with-action">
+          <h2 id="orders-title">Wholesale orders</h2>
+          {onNew && (
+            <button type="button" className="btn-primary btn-sm" onClick={onNew}>
+              + New order
+            </button>
+          )}
+        </div>
         <div className="tabs" role="tablist" aria-label="Filter by status">
           {FILTERS.map((f) => (
             <button

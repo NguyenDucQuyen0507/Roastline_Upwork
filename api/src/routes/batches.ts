@@ -39,8 +39,8 @@ const newBatch = z
     coffeeId: z.enum(COFFEE_IDS),
     roaster: z.enum(ROASTERS),
     start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM (24-hour)'),
-    durationMin: z.number().int().min(20).max(120),
-    kg: z.number().min(1),
+    durationMin: z.number({ error: 'Enter the roast time in minutes' }).int('Use whole minutes').min(20, 'At least 20 minutes').max(120, 'At most 120 minutes'),
+    kg: z.number({ error: 'Enter a weight in kg' }).min(1, 'At least 1 kg'),
     roastLevel: z.number().int().min(1).max(5),
   })
   .refine((b) => fromHHMM(b.start) + b.durationMin <= 24 * 60, {
