@@ -15,7 +15,9 @@ export const openapi = parseYaml(readFileSync(specPath, 'utf8'));
 
 export function createApp(store = new Store()) {
   const app = express();
-  app.use(cors());
+  // CORS_ORIGIN: comma-separated list of allowed origins (e.g. the deployed dashboard). Unset = allow all.
+  const origins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
+  app.use(cors(origins?.length ? { origin: origins } : undefined));
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/', (_req, res) => res.redirect('/docs'));

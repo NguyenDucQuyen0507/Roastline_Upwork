@@ -37,6 +37,7 @@ Environment variables:
 |---|---|---|
 | `PORT` | `3000` | Port to listen on |
 | `API_KEY` | `demo-key` | Key required in `X-API-Key` for write operations |
+| `CORS_ORIGIN` | (any) | Comma-separated list of origins allowed to call the API |
 
 ## Try it
 
@@ -94,13 +95,11 @@ tests/api.test.ts     Vitest + Supertest
 
 ## Deploy (free) on Render
 
-1. Push this folder to a GitHub repository.
-2. On [render.com](https://render.com), create a **Web Service** from the repository.
-3. Build command: `npm install && npm run build`. Start command: `npm start`.
-4. Add an environment variable `API_KEY` with your own value.
-5. Open `https://<your-service>.onrender.com/docs`.
+The repository includes a [Render Blueprint](render.yaml).
 
-## Notes
+1. Push this repository to GitHub.
+2. On [render.com](https://render.com): **New > Blueprint**, pick the repository.
+3. Set `CORS_ORIGIN` to the dashboard's URL (e.g. `https://roastline-dashboard.netlify.app`), or leave it empty to allow any origin.
+4. When the deploy finishes, the docs are at `https://<service>.onrender.com/docs`.
 
-- Data lives in memory and resets when the server restarts. The demo runs on a fixed date (2026-11-05) so the sample data stays meaningful.
-- Roasting yield is modelled as 85% (green to roasted weight). The House Espresso Blend is roasted from 60% Brazil Cerrado and 40% Colombia Huila.
+`API_KEY` is set to `demo-key` on purpose so visitors can try write operations in Swagger UI. Free Render services sleep when idle, so the first request can take 30–50 seconds.
